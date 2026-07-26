@@ -1,27 +1,24 @@
 version: '3.8'
 
 services:
-  mysql:
-    image: mysql:8.0
-    container_name: cheguei_mae_mysql
+  postgres:
+    image: postgres:16
+    container_name: cheguei_mae_postgres
     restart: unless-stopped
     environment:
-      MYSQL_ROOT_PASSWORD: root123
-      MYSQL_DATABASE: cheguei_mae
-      MYSQL_USER: cheguei_user
-      MYSQL_PASSWORD: cheguei_pass
+      POSTGRES_DB: cheguei_mae
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
     ports:
-      - "3306:3306"
+      - "5432:5432"
     volumes:
-      - mysql_data:/var/lib/mysql
+      - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-proot123"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d cheguei_mae"]
       interval: 10s
       timeout: 5s
       retries: 5
-    command: --default-authentication-plugin=mysql_native_password --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
 
 volumes:
-  mysql_data:
+  postgres_data:
     driver: local
-
