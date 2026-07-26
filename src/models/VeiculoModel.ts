@@ -3,9 +3,10 @@ import { Veiculo, DocumentoVeiculo } from '../types';
 
 export class VeiculoModel {
   static async create(veiculo: Omit<Veiculo, 'id' | 'createdAt' | 'updatedAt'>): Promise<string> {
-    const [result] = await pool.execute(
-      `INSERT INTO veiculos (placa, modelo, ano, quilometragemAtual, motoristaId, tenantId)
-       VALUES (?, ?, ?, ?, ?, ?)`,
+    const result = await pool.query(
+      `INSERT INTO veiculos (placa, modelo, ano, "quilometragemAtual", "motoristaId", "tenantId")
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING id`,
       [
         veiculo.placa,
         veiculo.modelo,
@@ -14,64 +15,71 @@ export class VeiculoModel {
         veiculo.motoristaId,
         veiculo.tenantId,
       ]
-    ) as any;
+    );
 
-    return result.insertId.toString();
+    return result.rows[0].id.toString();
   }
 
   static async findById(id: string, tenantId: string): Promise<Veiculo | null> {
-    const [rows] = await pool.execute(
-      'SELECT * FROM veiculos WHERE id = ? AND tenantId = ?',
+    const result = await pool.query(
+      'SELECT * FROM veiculos WHERE id = $1 AND "tenantId" = $2',
       [id, tenantId]
-    ) as any[];
+    );
 
-    if (rows.length === 0) return null;
+    if (result.rows.length === 0) return null;
 
-    return this.mapRowToVeiculo(rows[0]);
+    return this.mapRowToVeiculo(result.rows[0]);
   }
 
   static async findByMotorista(motoristaId: string, tenantId: string): Promise<Veiculo[]> {
-    const [rows] = await pool.execute(
-      'SELECT * FROM veiculos WHERE motoristaId = ? AND tenantId = ?',
+    const result = await pool.query(
+      'SELECT * FROM veiculos WHERE "motoristaId" = $1 AND "tenantId" = $2',
       [motoristaId, tenantId]
-    ) as any[];
+    );
 
-    return rows.map((row: any) => this.mapRowToVeiculo(row));
+    return result.rows.map((row: any) => this.mapRowToVeiculo(row));
   }
 
   static async findAll(tenantId: string): Promise<Veiculo[]> {
-    const [rows] = await pool.execute(
-      'SELECT * FROM veiculos WHERE tenantId = ?',
+    const result = await pool.query(
+      'SELECT * FROM veiculos WHERE "tenantId" = $1',
       [tenantId]
-    ) as any[];
+    );
 
-    return rows.map((row: any) => this.mapRowToVeiculo(row));
+    return result.rows.map((row: any) => this.mapRowToVeiculo(row));
   }
 
   static async update(id: string, tenantId: string, updates: Partial<Veiculo>): Promise<void> {
     const fields: string[] = [];
     const values: any[] = [];
+    let paramIndex = 1;
+
+    const camelCols = new Set(['quilometragemAtual', 'motoristaId', 'tenantId', 'createdAt', 'updatedAt']);
+    const skipFields = new Set(['id', 'createdAt', 'updatedAt', 'tenantId']);
 
     Object.keys(updates).forEach((key) => {
-      if (key !== 'id' && key !== 'createdAt' && key !== 'updatedAt' && key !== 'tenantId') {
-        fields.push(`${key} = ?`);
+      if (!skipFields.has(key)) {
+        const col = camelCols.has(key) ? `"${key}"` : key;
+        fields.push(`${col} = $${paramIndex++}`);
         values.push((updates as any)[key]);
       }
     });
 
-    fields.push('updatedAt = NOW()');
+    if (fields.length === 0) return;
+
     values.push(id, tenantId);
 
-    await pool.execute(
-      `UPDATE veiculos SET ${fields.join(', ')} WHERE id = ? AND tenantId = ?`,
+    await pool.query(
+      `UPDATE veiculos SET ${fields.join(', ')} WHERE id = $${paramIndex++} AND "tenantId" = $${paramIndex}`,
       values
     );
   }
 
   static async addDocumento(documento: Omit<DocumentoVeiculo, 'id' | 'createdAt' | 'updatedAt'>): Promise<string> {
-    const [result] = await pool.execute(
-      `INSERT INTO documento_veiculos (veiculoId, tipo, numero, validade, arquivoUrl, tenantId)
-       VALUES (?, ?, ?, ?, ?, ?)`,
+    const result = await pool.query(
+      `INSERT INTO documento_veiculos ("veiculoId", tipo, numero, validade, "arquivoUrl", "tenantId")
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING id`,
       [
         documento.veiculoId,
         documento.tipo,
@@ -80,18 +88,18 @@ export class VeiculoModel {
         documento.arquivoUrl || null,
         documento.tenantId,
       ]
-    ) as any;
+    );
 
-    return result.insertId.toString();
+    return result.rows[0].id.toString();
   }
 
   static async getDocumentos(veiculoId: string, tenantId: string): Promise<DocumentoVeiculo[]> {
-    const [rows] = await pool.execute(
-      'SELECT * FROM documento_veiculos WHERE veiculoId = ? AND tenantId = ?',
+    const result = await pool.query(
+      'SELECT * FROM documento_veiculos WHERE "veiculoId" = $1 AND "tenantId" = $2',
       [veiculoId, tenantId]
-    ) as any[];
+    );
 
-    return rows.map((row: any) => ({
+    return result.rows.map((row: any) => ({
       id: row.id.toString(),
       veiculoId: row.veiculoId.toString(),
       tipo: row.tipo,
@@ -118,4 +126,3 @@ export class VeiculoModel {
     };
   }
 }
-

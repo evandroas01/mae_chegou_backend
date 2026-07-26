@@ -5,10 +5,11 @@ import { hashPassword, comparePassword } from '../utils/password';
 export class UserModel {
   static async create(user: Omit<User, 'id' | 'createdAt' | 'updatedAt'>): Promise<string> {
     const hashedPassword = await hashPassword(user.password);
-    
-    const [result] = await pool.execute(
-      `INSERT INTO users (nome, email, password, role, telefone, cpf, motoristaId, tenantId)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+
+    const result = await pool.query(
+      `INSERT INTO users (nome, email, password, role, telefone, cpf, "motoristaId", "tenantId")
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       RETURNING id`,
       [
         user.nome,
         user.email,
@@ -19,95 +20,97 @@ export class UserModel {
         user.motoristaId || null,
         user.tenantId || null,
       ]
-    ) as any;
+    );
 
-    return result.insertId.toString();
+    return result.rows[0].id.toString();
   }
 
   static async findByEmail(email: string): Promise<User | null> {
-    const [rows] = await pool.execute(
-      'SELECT * FROM users WHERE email = ?',
+    const result = await pool.query(
+      'SELECT * FROM users WHERE email = $1',
       [email]
-    ) as any[];
+    );
 
-    if (rows.length === 0) return null;
+    if (result.rows.length === 0) return null;
 
-    return this.mapRowToUser(rows[0]);
+    return this.mapRowToUser(result.rows[0]);
   }
 
   static async findById(id: string): Promise<User | null> {
-    const [rows] = await pool.execute(
-      'SELECT * FROM users WHERE id = ?',
+    const result = await pool.query(
+      'SELECT * FROM users WHERE id = $1',
       [id]
-    ) as any[];
+    );
 
-    if (rows.length === 0) return null;
+    if (result.rows.length === 0) return null;
 
-    return this.mapRowToUser(rows[0]);
+    return this.mapRowToUser(result.rows[0]);
   }
 
   static async findByTenant(tenantId: string, role?: UserRole): Promise<User[]> {
-    let query = 'SELECT * FROM users WHERE tenantId = ?';
+    let query = 'SELECT * FROM users WHERE "tenantId" = $1';
     const params: any[] = [tenantId];
 
     if (role) {
-      query += ' AND role = ?';
+      query += ' AND role = $2';
       params.push(role);
     }
 
-    const [rows] = await pool.execute(query, params) as any[];
+    const result = await pool.query(query, params);
 
-    return rows.map((row: any) => this.mapRowToUser(row));
+    return result.rows.map((row: any) => this.mapRowToUser(row));
   }
 
   static async findByMotorista(motoristaId: string): Promise<User[]> {
-    const [rows] = await pool.execute(
-      'SELECT * FROM users WHERE motoristaId = ?',
+    const result = await pool.query(
+      'SELECT * FROM users WHERE "motoristaId" = $1',
       [motoristaId]
-    ) as any[];
+    );
 
-    return rows.map((row: any) => this.mapRowToUser(row));
+    return result.rows.map((row: any) => this.mapRowToUser(row));
   }
 
   static async update(id: string, updates: Partial<User>): Promise<void> {
     const fields: string[] = [];
     const values: any[] = [];
+    let paramIndex = 1;
 
     if (updates.nome) {
-      fields.push('nome = ?');
+      fields.push(`nome = $${paramIndex++}`);
       values.push(updates.nome);
     }
     if (updates.email) {
-      fields.push('email = ?');
+      fields.push(`email = $${paramIndex++}`);
       values.push(updates.email);
     }
     if (updates.password) {
       const hashedPassword = await hashPassword(updates.password);
-      fields.push('password = ?');
+      fields.push(`password = $${paramIndex++}`);
       values.push(hashedPassword);
     }
     if (updates.telefone !== undefined) {
-      fields.push('telefone = ?');
+      fields.push(`telefone = $${paramIndex++}`);
       values.push(updates.telefone);
     }
     if (updates.cpf !== undefined) {
-      fields.push('cpf = ?');
+      fields.push(`cpf = $${paramIndex++}`);
       values.push(updates.cpf);
     }
     if (updates.statusOnline !== undefined) {
-      fields.push('statusOnline = ?');
+      fields.push(`"statusOnline" = $${paramIndex++}`);
       values.push(updates.statusOnline);
     }
     if (updates.lastHeartbeat !== undefined) {
-      fields.push('lastHeartbeat = ?');
+      fields.push(`"lastHeartbeat" = $${paramIndex++}`);
       values.push(updates.lastHeartbeat);
     }
 
-    fields.push('updatedAt = NOW()');
+    if (fields.length === 0) return;
+
     values.push(id);
 
-    await pool.execute(
-      `UPDATE users SET ${fields.join(', ')} WHERE id = ?`,
+    await pool.query(
+      `UPDATE users SET ${fields.join(', ')} WHERE id = $${paramIndex}`,
       values
     );
   }
@@ -140,4 +143,3 @@ export class UserModel {
     };
   }
 }
-

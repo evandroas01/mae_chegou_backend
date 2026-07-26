@@ -1,0 +1,33 @@
+services:
+  - type: web
+    name: cheguei-mae-backend
+    env: node
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: JWT_EXPIRES_IN
+        value: 7d
+      # ─── Banco de Dados ─────────────────────────────────────
+      # Cole a DATABASE_URL do seu banco PostgreSQL (Render/Supabase/Neon)
+      # Exemplo Render:   postgres://user:pass@host/dbname
+      # Exemplo Supabase: postgres://postgres:pass@db.xxx.supabase.co:5432/postgres
+      - key: DATABASE_URL
+        sync: false   # preenchido manualmente no dashboard do Render
+      # ─── JWT ────────────────────────────────────────────────
+      # Gere com: openssl rand -hex 32
+      - key: JWT_SECRET
+        sync: false
+      # ─── CORS ───────────────────────────────────────────────
+      # URL(s) do frontend separadas por vírgula
+      - key: CORS_ORIGIN
+        sync: false
+      # ─── Supabase Storage ───────────────────────────────────
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_KEY
+        sync: false
+      - key: SUPABASE_BUCKET
+        value: uploads

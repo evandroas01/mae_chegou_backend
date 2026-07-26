@@ -14,17 +14,17 @@ export const requireTenant = async (
     }
 
     // Buscar tenantId do usuário
-    const [users] = await pool.execute(
-      'SELECT tenantId FROM users WHERE id = ?',
+    const result = await pool.query(
+      'SELECT "tenantId" FROM users WHERE id = $1',
       [req.userId]
-    ) as any[];
+    );
 
-    if (users.length === 0) {
+    if (result.rows.length === 0) {
       res.status(404).json({ error: 'Usuário não encontrado' });
       return;
     }
 
-    req.tenantId = users[0].tenantId || req.userId; // Fallback para userId se não tiver tenantId
+    req.tenantId = result.rows[0].tenantId || req.userId; // Fallback para userId se não tiver tenantId
 
     next();
   } catch (error) {
@@ -32,4 +32,3 @@ export const requireTenant = async (
     res.status(500).json({ error: 'Erro interno do servidor' });
   }
 };
-

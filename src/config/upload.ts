@@ -24,7 +24,7 @@ if (!useSupabase && !fs.existsSync(uploadDir)) {
 }
 
 const diskStorage = multer.diskStorage({
-  destination: (req, file, cb) => {
+  destination: (_req, file, cb) => {
     let subDir = 'general';
     if (file.fieldname === 'documento') subDir = 'documentos';
     else if (file.fieldname === 'anexo') subDir = 'anexos';
@@ -34,7 +34,7 @@ const diskStorage = multer.diskStorage({
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     cb(null, dir);
   },
-  filename: (req, file, cb) => {
+  filename: (_req, file, cb) => {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
     const ext = path.extname(file.originalname);
     const name = path.basename(file.originalname, ext);
@@ -48,7 +48,7 @@ const memoryStorage = multer.memoryStorage();
 // ─────────────────────────────────────────────
 // Filtro de tipos permitidos
 // ─────────────────────────────────────────────
-const fileFilter = (req: any, file: Express.Multer.File, cb: multer.FileFilterCallback) => {
+const fileFilter = (_req: any, file: Express.Multer.File, cb: multer.FileFilterCallback) => {
   const allowedMimes = [
     'image/jpeg',
     'image/jpg',

@@ -22,11 +22,11 @@ export class NotificacaoController {
 
       const status = enviarAgora ? 'enviada' : 'agendada';
 
-      const [result] = await pool.execute(
+      const result = await pool.query(
         `INSERT INTO notificacoes (
-          tipo, titulo, mensagem, enviarAgora, dataHoraAgendamento,
-          status, remetenteId, tenantId
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          tipo, titulo, mensagem, "enviarAgora", "dataHoraAgendamento",
+          status, "remetenteId", "tenantId"
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
         [
           tipo,
           titulo,
@@ -37,35 +37,37 @@ export class NotificacaoController {
           req.userId,
           req.tenantId,
         ]
-      ) as any;
+      );
 
-      const notificacaoId = result.insertId.toString();
+      const notificacaoId = result.rows[0].id.toString();
 
       // Se for específico, criar registros de destinatários
       if (tipo === 'especifico' && destinatarioIds && destinatarioIds.length > 0) {
-        const values = destinatarioIds.map((destId: string) => [notificacaoId, destId]);
-        const placeholders = values.map(() => '(?, ?)').join(', ');
-
-        await pool.execute(
-          `INSERT INTO notificacao_destinatarios (notificacaoId, destinatarioId)
-           VALUES ${placeholders}`,
-          values.flat()
+        const values: any[] = [];
+        const placeholders = destinatarioIds.map((destId: string, i: number) => {
+          values.push(notificacaoId, destId);
+          return `($${i * 2 + 1}, $${i * 2 + 2})`;
+        });
+        await pool.query(
+          `INSERT INTO notificacao_destinatarios ("notificacaoId", "destinatarioId") VALUES ${placeholders.join(', ')} ON CONFLICT DO NOTHING`,
+          values
         );
       } else if (tipo === 'todos') {
         // Buscar todos os responsáveis do tenant
-        const [responsaveis] = await pool.execute(
-          'SELECT id FROM users WHERE role = "responsavel" AND tenantId = ?',
+        const responsaveis = await pool.query(
+          'SELECT id FROM users WHERE role = \'responsavel\' AND "tenantId" = $1',
           [req.tenantId]
-        ) as any[];
+        );
 
-        if (responsaveis.length > 0) {
-          const values = responsaveis.map((r: any) => [notificacaoId, r.id.toString()]);
-          const placeholders = values.map(() => '(?, ?)').join(', ');
-
-          await pool.execute(
-            `INSERT INTO notificacao_destinatarios (notificacaoId, destinatarioId)
-             VALUES ${placeholders}`,
-            values.flat()
+        if (responsaveis.rows.length > 0) {
+          const values: any[] = [];
+          const placeholders = responsaveis.rows.map((r: any, i: number) => {
+            values.push(notificacaoId, r.id.toString());
+            return `($${i * 2 + 1}, $${i * 2 + 2})`;
+          });
+          await pool.query(
+            `INSERT INTO notificacao_destinatarios ("notificacaoId", "destinatarioId") VALUES ${placeholders.join(', ')} ON CONFLICT DO NOTHING`,
+            values
           );
         }
       }
@@ -86,26 +88,27 @@ export class NotificacaoController {
         return;
       }
 
-      let query = 'SELECT * FROM notificacoes WHERE tenantId = ?';
-      const params: any[] = [req.tenantId];
+      let query: string;
+      const params: any[] = [];
 
       if (req.userRole === 'responsavel') {
         // Buscar apenas notificações destinadas ao responsável
         query = `
-          SELECT n.*, nd.lida, nd.dataLeitura
+          SELECT n.*, nd.lida, nd."dataLeitura"
           FROM notificacoes n
-          INNER JOIN notificacao_destinatarios nd ON n.id = nd.notificacaoId
-          WHERE nd.destinatarioId = ? AND n.tenantId = ?
-          ORDER BY n.createdAt DESC
+          INNER JOIN notificacao_destinatarios nd ON n.id = nd."notificacaoId"
+          WHERE nd."destinatarioId" = $1 AND n."tenantId" = $2
+          ORDER BY n."createdAt" DESC
         `;
-        params.unshift(req.userId);
+        params.push(req.userId, req.tenantId);
       } else {
-        query += ' ORDER BY createdAt DESC';
+        query = 'SELECT * FROM notificacoes WHERE "tenantId" = $1 ORDER BY "createdAt" DESC';
+        params.push(req.tenantId);
       }
 
-      const [rows] = await pool.execute(query, params) as any[];
+      const result = await pool.query(query, params);
 
-      res.json(rows.map((row: any) => this.mapRowToNotificacao(row)));
+      res.json(result.rows.map((row: any) => this.mapRowToNotificacao(row)));
     } catch (error) {
       console.error('Erro ao buscar notificações:', error);
       res.status(500).json({ error: 'Erro interno do servidor' });
@@ -113,14 +116,14 @@ export class NotificacaoController {
   }
 
   static async findById(id: string, tenantId: string): Promise<Notificacao | null> {
-    const [rows] = await pool.execute(
-      'SELECT * FROM notificacoes WHERE id = ? AND tenantId = ?',
+    const result = await pool.query(
+      'SELECT * FROM notificacoes WHERE id = $1 AND "tenantId" = $2',
       [id, tenantId]
-    ) as any[];
+    );
 
-    if (rows.length === 0) return null;
+    if (result.rows.length === 0) return null;
 
-    return this.mapRowToNotificacao(rows[0]);
+    return this.mapRowToNotificacao(result.rows[0]);
   }
 
   static async marcarComoLida(req: AuthRequest, res: Response): Promise<void> {
@@ -132,10 +135,10 @@ export class NotificacaoController {
 
       const { id } = req.params;
 
-      await pool.execute(
+      await pool.query(
         `UPDATE notificacao_destinatarios
-         SET lida = true, dataLeitura = NOW()
-         WHERE notificacaoId = ? AND destinatarioId = ?`,
+         SET lida = TRUE, "dataLeitura" = NOW()
+         WHERE "notificacaoId" = $1 AND "destinatarioId" = $2`,
         [id, req.userId]
       );
 
@@ -153,17 +156,16 @@ export class NotificacaoController {
         return;
       }
 
-      // Buscar responsáveis dos alunos do motorista
-      const [rows] = await pool.execute(
+      const result = await pool.query(
         `SELECT DISTINCT u.id, u.nome, u.cpf, u.telefone, u.email
          FROM users u
-         INNER JOIN alunos a ON a.responsavelId = u.id
-         WHERE a.motoristaId = ? AND u.tenantId = ? AND u.role = 'responsavel'
+         INNER JOIN alunos a ON a."responsavelId" = u.id
+         WHERE a."motoristaId" = $1 AND u."tenantId" = $2 AND u.role = 'responsavel'
          ORDER BY u.nome`,
         [req.userId, req.tenantId]
-      ) as any[];
+      );
 
-      res.json(rows);
+      res.json(result.rows);
     } catch (error) {
       console.error('Erro ao buscar responsáveis:', error);
       res.status(500).json({ error: 'Erro interno do servidor' });
@@ -189,4 +191,3 @@ export class NotificacaoController {
     };
   }
 }
-

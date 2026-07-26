@@ -40,7 +40,7 @@ export class UploadController {
         return;
       }
 
-      const files = Array.isArray(req.files) ? req.files : [req.files];
+      const files = (Array.isArray(req.files) ? req.files : Object.values(req.files as any).flat()) as Express.Multer.File[];
       const fileType = req.body.type || 'general';
 
       const uploadedFiles = await Promise.all(

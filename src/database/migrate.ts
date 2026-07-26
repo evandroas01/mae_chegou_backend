@@ -1,45 +1,69 @@
 import pool from '../config/database';
 
+// ─────────────────────────────────────────────────────────────
+// Trigger function para auto-atualizar updatedAt no PostgreSQL
+// (equivalente ao ON UPDATE CURRENT_TIMESTAMP do MySQL)
+// ─────────────────────────────────────────────────────────────
+const triggerFunction = `
+  CREATE OR REPLACE FUNCTION update_updated_at_column()
+  RETURNS TRIGGER AS $$
+  BEGIN
+    NEW."updatedAt" = NOW();
+    RETURN NEW;
+  END;
+  $$ language 'plpgsql';
+`;
+
 const migrations = [
   // Tabela de usuários
   `CREATE TABLE IF NOT EXISTS users (
-    id INT AUTO_INCREMENT PRIMARY KEY,
+    id SERIAL PRIMARY KEY,
     nome VARCHAR(255) NOT NULL,
     email VARCHAR(255) NOT NULL UNIQUE,
     password VARCHAR(255) NOT NULL,
-    role ENUM('admin', 'motorista', 'responsavel', 'aluno') NOT NULL,
+    role VARCHAR(20) NOT NULL CHECK (role IN ('admin', 'motorista', 'responsavel', 'aluno')),
     telefone VARCHAR(20),
     cpf VARCHAR(14),
-    motoristaId INT,
-    tenantId INT,
-    statusOnline BOOLEAN NOT NULL DEFAULT FALSE,
-    lastHeartbeat DATETIME NULL DEFAULT NULL,
-    createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    INDEX idx_email (email),
-    INDEX idx_tenant (tenantId),
-    INDEX idx_motorista (motoristaId),
-    INDEX idx_users_motorista_online (statusOnline, role),
-    FOREIGN KEY (motoristaId) REFERENCES users(id) ON DELETE SET NULL
-  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
+    "motoristaId" INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    "tenantId" INTEGER,
+    "statusOnline" BOOLEAN NOT NULL DEFAULT FALSE,
+    "lastHeartbeat" TIMESTAMP NULL DEFAULT NULL,
+    "createdAt" TIMESTAMP DEFAULT NOW(),
+    "updatedAt" TIMESTAMP DEFAULT NOW()
+  )`,
+
+  `CREATE INDEX IF NOT EXISTS idx_users_email ON users (email)`,
+  `CREATE INDEX IF NOT EXISTS idx_users_tenant ON users ("tenantId")`,
+  `CREATE INDEX IF NOT EXISTS idx_users_motorista ON users ("motoristaId")`,
+  `CREATE INDEX IF NOT EXISTS idx_users_motorista_online ON users ("statusOnline", role)`,
+
+  // Trigger updatedAt para users
+  `DROP TRIGGER IF EXISTS users_updated_at ON users`,
+  `CREATE TRIGGER users_updated_at
+     BEFORE UPDATE ON users
+     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column()`,
 
   // Tabela de escolas
   `CREATE TABLE IF NOT EXISTS escolas (
-    id INT AUTO_INCREMENT PRIMARY KEY,
+    id SERIAL PRIMARY KEY,
     nome VARCHAR(255) NOT NULL,
     endereco VARCHAR(500) NOT NULL,
     cidade VARCHAR(100) NOT NULL,
     estado VARCHAR(2) NOT NULL,
     cep VARCHAR(10) NOT NULL,
-    tenantId INT NOT NULL,
-    createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    INDEX idx_tenant (tenantId)
-  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
+    "tenantId" INTEGER NOT NULL,
+    "createdAt" TIMESTAMP DEFAULT NOW(),
+    "updatedAt" TIMESTAMP DEFAULT NOW()
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_escolas_tenant ON escolas ("tenantId")`,
+  `DROP TRIGGER IF EXISTS escolas_updated_at ON escolas`,
+  `CREATE TRIGGER escolas_updated_at
+     BEFORE UPDATE ON escolas
+     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column()`,
 
   // Tabela de endereços
   `CREATE TABLE IF NOT EXISTS enderecos (
-    id INT AUTO_INCREMENT PRIMARY KEY,
+    id SERIAL PRIMARY KEY,
     rua VARCHAR(255) NOT NULL,
     numero VARCHAR(20) NOT NULL,
     complemento VARCHAR(100),
@@ -49,318 +73,334 @@ const migrations = [
     cep VARCHAR(10) NOT NULL,
     latitude DECIMAL(10, 8),
     longitude DECIMAL(11, 8),
-    tenantId INT NOT NULL,
-    createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    INDEX idx_tenant (tenantId)
-  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
+    "tenantId" INTEGER NOT NULL,
+    "createdAt" TIMESTAMP DEFAULT NOW(),
+    "updatedAt" TIMESTAMP DEFAULT NOW()
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_enderecos_tenant ON enderecos ("tenantId")`,
+  `DROP TRIGGER IF EXISTS enderecos_updated_at ON enderecos`,
+  `CREATE TRIGGER enderecos_updated_at
+     BEFORE UPDATE ON enderecos
+     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column()`,
 
   // Tabela de alunos
   `CREATE TABLE IF NOT EXISTS alunos (
-    id INT AUTO_INCREMENT PRIMARY KEY,
+    id SERIAL PRIMARY KEY,
     nome VARCHAR(255) NOT NULL,
-    dataNascimento DATE NOT NULL,
+    "dataNascimento" DATE NOT NULL,
     serie VARCHAR(50) NOT NULL,
     turma VARCHAR(10) NOT NULL,
-    periodo ENUM('M', 'T', 'N') NOT NULL,
-    status ENUM('ativo', 'inativo') DEFAULT 'ativo',
-    escolaId INT NOT NULL,
-    responsavelId INT NOT NULL,
-    motoristaId INT NOT NULL,
-    enderecoContratanteId INT NOT NULL,
-    enderecoSaidaId INT,
-    valorMensal DECIMAL(10, 2) NOT NULL,
-    formaPagamento ENUM('debito', 'credito', 'pix', 'boleto') NOT NULL,
-    diasSemana JSON NOT NULL,
-    datasVencimento JSON NOT NULL,
-    contratoId INT,
-    tenantId INT NOT NULL,
-    createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    INDEX idx_responsavel (responsavelId),
-    INDEX idx_motorista (motoristaId),
-    INDEX idx_tenant (tenantId),
-    INDEX idx_escola (escolaId),
-    FOREIGN KEY (escolaId) REFERENCES escolas(id) ON DELETE RESTRICT,
-    FOREIGN KEY (responsavelId) REFERENCES users(id) ON DELETE RESTRICT,
-    FOREIGN KEY (motoristaId) REFERENCES users(id) ON DELETE RESTRICT,
-    FOREIGN KEY (enderecoContratanteId) REFERENCES enderecos(id) ON DELETE RESTRICT,
-    FOREIGN KEY (enderecoSaidaId) REFERENCES enderecos(id) ON DELETE SET NULL
-  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
+    periodo VARCHAR(1) NOT NULL CHECK (periodo IN ('M', 'T', 'N')),
+    status VARCHAR(10) DEFAULT 'ativo' CHECK (status IN ('ativo', 'inativo')),
+    "escolaId" INTEGER NOT NULL REFERENCES escolas(id) ON DELETE RESTRICT,
+    "responsavelId" INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    "motoristaId" INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    "enderecoContratanteId" INTEGER NOT NULL REFERENCES enderecos(id) ON DELETE RESTRICT,
+    "enderecoSaidaId" INTEGER REFERENCES enderecos(id) ON DELETE SET NULL,
+    "valorMensal" DECIMAL(10, 2) NOT NULL,
+    "formaPagamento" VARCHAR(10) NOT NULL CHECK ("formaPagamento" IN ('debito', 'credito', 'pix', 'boleto')),
+    "diasSemana" JSONB NOT NULL,
+    "datasVencimento" JSONB NOT NULL,
+    "contratoId" INTEGER,
+    "tenantId" INTEGER NOT NULL,
+    "createdAt" TIMESTAMP DEFAULT NOW(),
+    "updatedAt" TIMESTAMP DEFAULT NOW()
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_alunos_responsavel ON alunos ("responsavelId")`,
+  `CREATE INDEX IF NOT EXISTS idx_alunos_motorista ON alunos ("motoristaId")`,
+  `CREATE INDEX IF NOT EXISTS idx_alunos_tenant ON alunos ("tenantId")`,
+  `CREATE INDEX IF NOT EXISTS idx_alunos_escola ON alunos ("escolaId")`,
+  `DROP TRIGGER IF EXISTS alunos_updated_at ON alunos`,
+  `CREATE TRIGGER alunos_updated_at
+     BEFORE UPDATE ON alunos
+     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column()`,
 
   // Tabela de veículos
   `CREATE TABLE IF NOT EXISTS veiculos (
-    id INT AUTO_INCREMENT PRIMARY KEY,
+    id SERIAL PRIMARY KEY,
     placa VARCHAR(10) NOT NULL UNIQUE,
     modelo VARCHAR(100) NOT NULL,
-    ano INT NOT NULL,
-    quilometragemAtual INT DEFAULT 0,
-    motoristaId INT NOT NULL,
-    tenantId INT NOT NULL,
-    createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    INDEX idx_motorista (motoristaId),
-    INDEX idx_tenant (tenantId),
-    FOREIGN KEY (motoristaId) REFERENCES users(id) ON DELETE RESTRICT
-  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
+    ano INTEGER NOT NULL,
+    "quilometragemAtual" INTEGER DEFAULT 0,
+    "motoristaId" INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    "tenantId" INTEGER NOT NULL,
+    "createdAt" TIMESTAMP DEFAULT NOW(),
+    "updatedAt" TIMESTAMP DEFAULT NOW()
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_veiculos_motorista ON veiculos ("motoristaId")`,
+  `CREATE INDEX IF NOT EXISTS idx_veiculos_tenant ON veiculos ("tenantId")`,
+  `DROP TRIGGER IF EXISTS veiculos_updated_at ON veiculos`,
+  `CREATE TRIGGER veiculos_updated_at
+     BEFORE UPDATE ON veiculos
+     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column()`,
 
   // Tabela de documentos do veículo
   `CREATE TABLE IF NOT EXISTS documento_veiculos (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    veiculoId INT NOT NULL,
-    tipo ENUM('licenciamento', 'seguro', 'vistoria_escolar') NOT NULL,
+    id SERIAL PRIMARY KEY,
+    "veiculoId" INTEGER NOT NULL REFERENCES veiculos(id) ON DELETE CASCADE,
+    tipo VARCHAR(20) NOT NULL CHECK (tipo IN ('licenciamento', 'seguro', 'vistoria_escolar')),
     numero VARCHAR(100) NOT NULL,
     validade DATE NOT NULL,
-    arquivoUrl VARCHAR(500),
-    tenantId INT NOT NULL,
-    createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    INDEX idx_veiculo (veiculoId),
-    INDEX idx_tenant (tenantId),
-    FOREIGN KEY (veiculoId) REFERENCES veiculos(id) ON DELETE CASCADE
-  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
+    "arquivoUrl" VARCHAR(500),
+    "tenantId" INTEGER NOT NULL,
+    "createdAt" TIMESTAMP DEFAULT NOW(),
+    "updatedAt" TIMESTAMP DEFAULT NOW()
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_docvehicle_veiculo ON documento_veiculos ("veiculoId")`,
+  `CREATE INDEX IF NOT EXISTS idx_docvehicle_tenant ON documento_veiculos ("tenantId")`,
+  `DROP TRIGGER IF EXISTS documento_veiculos_updated_at ON documento_veiculos`,
+  `CREATE TRIGGER documento_veiculos_updated_at
+     BEFORE UPDATE ON documento_veiculos
+     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column()`,
 
   // Tabela de manutenções
   `CREATE TABLE IF NOT EXISTS manutencoes (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    veiculoId INT NOT NULL,
-    dataAgendada DATETIME,
-    dataRealizada DATETIME,
-    tipo ENUM('preventiva', 'corretiva') NOT NULL,
+    id SERIAL PRIMARY KEY,
+    "veiculoId" INTEGER NOT NULL REFERENCES veiculos(id) ON DELETE CASCADE,
+    "dataAgendada" TIMESTAMP,
+    "dataRealizada" TIMESTAMP,
+    tipo VARCHAR(10) NOT NULL CHECK (tipo IN ('preventiva', 'corretiva')),
     descricao TEXT NOT NULL,
     custo DECIMAL(10, 2) DEFAULT 0,
-    quilometragem INT NOT NULL,
-    status ENUM('agendada', 'realizada', 'atrasada') NOT NULL,
-    repetirTipo ENUM('km', 'meses'),
-    repetirIntervalo INT,
-    tenantId INT NOT NULL,
-    createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    INDEX idx_veiculo (veiculoId),
-    INDEX idx_status (status),
-    INDEX idx_tenant (tenantId),
-    FOREIGN KEY (veiculoId) REFERENCES veiculos(id) ON DELETE CASCADE
-  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
+    quilometragem INTEGER NOT NULL,
+    status VARCHAR(10) NOT NULL CHECK (status IN ('agendada', 'realizada', 'atrasada')),
+    "repetirTipo" VARCHAR(6) CHECK ("repetirTipo" IN ('km', 'meses')),
+    "repetirIntervalo" INTEGER,
+    "tenantId" INTEGER NOT NULL,
+    "createdAt" TIMESTAMP DEFAULT NOW(),
+    "updatedAt" TIMESTAMP DEFAULT NOW()
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_manutencoes_veiculo ON manutencoes ("veiculoId")`,
+  `CREATE INDEX IF NOT EXISTS idx_manutencoes_status ON manutencoes (status)`,
+  `CREATE INDEX IF NOT EXISTS idx_manutencoes_tenant ON manutencoes ("tenantId")`,
+  `DROP TRIGGER IF EXISTS manutencoes_updated_at ON manutencoes`,
+  `CREATE TRIGGER manutencoes_updated_at
+     BEFORE UPDATE ON manutencoes
+     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column()`,
 
   // Tabela de contratos
   `CREATE TABLE IF NOT EXISTS contratos (
-    id INT AUTO_INCREMENT PRIMARY KEY,
+    id SERIAL PRIMARY KEY,
     numero VARCHAR(50) NOT NULL UNIQUE,
-    responsavelId INT NOT NULL,
-    periodo ENUM('M', 'T', 'N') NOT NULL,
+    "responsavelId" INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    periodo VARCHAR(1) NOT NULL CHECK (periodo IN ('M', 'T', 'N')),
     valor DECIMAL(10, 2) NOT NULL,
-    vencimento INT NOT NULL,
-    statusAssinatura ENUM('pendente', 'assinado', 'cancelado') DEFAULT 'pendente',
-    statusPagamento ENUM('em_dia', 'atrasado') DEFAULT 'em_dia',
-    periodoAtraso INT DEFAULT 0,
+    vencimento INTEGER NOT NULL,
+    "statusAssinatura" VARCHAR(10) DEFAULT 'pendente' CHECK ("statusAssinatura" IN ('pendente', 'assinado', 'cancelado')),
+    "statusPagamento" VARCHAR(10) DEFAULT 'em_dia' CHECK ("statusPagamento" IN ('em_dia', 'atrasado')),
+    "periodoAtraso" INTEGER DEFAULT 0,
     clausulas TEXT,
-    arquivoUrl VARCHAR(500),
-    dataInicio DATE NOT NULL,
-    dataFim DATE,
-    dataEnvio DATETIME,
-    dataAssinatura DATETIME,
-    tenantId INT NOT NULL,
-    createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    INDEX idx_responsavel (responsavelId),
-    INDEX idx_tenant (tenantId),
-    FOREIGN KEY (responsavelId) REFERENCES users(id) ON DELETE RESTRICT
-  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
+    "arquivoUrl" VARCHAR(500),
+    "dataInicio" DATE NOT NULL,
+    "dataFim" DATE,
+    "dataEnvio" TIMESTAMP,
+    "dataAssinatura" TIMESTAMP,
+    "tenantId" INTEGER NOT NULL,
+    "createdAt" TIMESTAMP DEFAULT NOW(),
+    "updatedAt" TIMESTAMP DEFAULT NOW()
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_contratos_responsavel ON contratos ("responsavelId")`,
+  `CREATE INDEX IF NOT EXISTS idx_contratos_tenant ON contratos ("tenantId")`,
+  `DROP TRIGGER IF EXISTS contratos_updated_at ON contratos`,
+  `CREATE TRIGGER contratos_updated_at
+     BEFORE UPDATE ON contratos
+     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column()`,
 
   // Tabela de relação contrato-aluno
   `CREATE TABLE IF NOT EXISTS contrato_alunos (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    contratoId INT NOT NULL,
-    alunoId INT NOT NULL,
-    createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    INDEX idx_contrato (contratoId),
-    INDEX idx_aluno (alunoId),
-    FOREIGN KEY (contratoId) REFERENCES contratos(id) ON DELETE CASCADE,
-    FOREIGN KEY (alunoId) REFERENCES alunos(id) ON DELETE CASCADE,
-    UNIQUE KEY unique_contrato_aluno (contratoId, alunoId)
-  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
+    id SERIAL PRIMARY KEY,
+    "contratoId" INTEGER NOT NULL REFERENCES contratos(id) ON DELETE CASCADE,
+    "alunoId" INTEGER NOT NULL REFERENCES alunos(id) ON DELETE CASCADE,
+    "createdAt" TIMESTAMP DEFAULT NOW(),
+    UNIQUE ("contratoId", "alunoId")
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_contrato_alunos_contrato ON contrato_alunos ("contratoId")`,
+  `CREATE INDEX IF NOT EXISTS idx_contrato_alunos_aluno ON contrato_alunos ("alunoId")`,
 
   // Tabela de logs de contrato
   `CREATE TABLE IF NOT EXISTS contrato_logs (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    contratoId INT NOT NULL,
-    acao ENUM('criado', 'enviado', 'assinado', 'cancelado', 'reemitido') NOT NULL,
-    data DATETIME NOT NULL,
+    id SERIAL PRIMARY KEY,
+    "contratoId" INTEGER NOT NULL REFERENCES contratos(id) ON DELETE CASCADE,
+    acao VARCHAR(10) NOT NULL CHECK (acao IN ('criado', 'enviado', 'assinado', 'cancelado', 'reemitido')),
+    data TIMESTAMP NOT NULL,
     observacoes TEXT,
-    createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    INDEX idx_contrato (contratoId),
-    FOREIGN KEY (contratoId) REFERENCES contratos(id) ON DELETE CASCADE
-  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
+    "createdAt" TIMESTAMP DEFAULT NOW()
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_contrato_logs_contrato ON contrato_logs ("contratoId")`,
 
   // Tabela de lançamentos financeiros
   `CREATE TABLE IF NOT EXISTS lancamentos (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    tipo ENUM('receita', 'despesa') NOT NULL,
-    categoria ENUM('receita_recorrente', 'receita_extra', 'despesa_fixa', 'despesa_variavel') NOT NULL,
+    id SERIAL PRIMARY KEY,
+    tipo VARCHAR(10) NOT NULL CHECK (tipo IN ('receita', 'despesa')),
+    categoria VARCHAR(30) NOT NULL CHECK (categoria IN ('receita_recorrente', 'receita_extra', 'despesa_fixa', 'despesa_variavel')),
     valor DECIMAL(10, 2) NOT NULL,
     data DATE NOT NULL,
-    dataVencimento DATE,
-    dataPagamento DATE,
+    "dataVencimento" DATE,
+    "dataPagamento" DATE,
     descricao TEXT NOT NULL,
-    status ENUM('pago', 'pendente', 'atrasado') NOT NULL,
-    vinculadoAlunoId INT,
-    vinculadoContratoId INT,
-    recorrenciaTipo ENUM('mensal', 'trimestral', 'semestral', 'anual'),
-    recorrenciaMeses INT,
-    recorrenciaDataFim DATE,
-    tenantId INT NOT NULL,
-    createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    INDEX idx_tipo (tipo),
-    INDEX idx_status (status),
-    INDEX idx_tenant (tenantId),
-    INDEX idx_aluno (vinculadoAlunoId),
-    INDEX idx_contrato (vinculadoContratoId),
-    FOREIGN KEY (vinculadoAlunoId) REFERENCES alunos(id) ON DELETE SET NULL,
-    FOREIGN KEY (vinculadoContratoId) REFERENCES contratos(id) ON DELETE SET NULL
-  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
+    status VARCHAR(10) NOT NULL CHECK (status IN ('pago', 'pendente', 'atrasado')),
+    "vinculadoAlunoId" INTEGER REFERENCES alunos(id) ON DELETE SET NULL,
+    "vinculadoContratoId" INTEGER REFERENCES contratos(id) ON DELETE SET NULL,
+    "recorrenciaTipo" VARCHAR(12) CHECK ("recorrenciaTipo" IN ('mensal', 'trimestral', 'semestral', 'anual')),
+    "recorrenciaMeses" INTEGER,
+    "recorrenciaDataFim" DATE,
+    "tenantId" INTEGER NOT NULL,
+    "createdAt" TIMESTAMP DEFAULT NOW(),
+    "updatedAt" TIMESTAMP DEFAULT NOW()
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_lancamentos_tipo ON lancamentos (tipo)`,
+  `CREATE INDEX IF NOT EXISTS idx_lancamentos_status ON lancamentos (status)`,
+  `CREATE INDEX IF NOT EXISTS idx_lancamentos_tenant ON lancamentos ("tenantId")`,
+  `CREATE INDEX IF NOT EXISTS idx_lancamentos_aluno ON lancamentos ("vinculadoAlunoId")`,
+  `CREATE INDEX IF NOT EXISTS idx_lancamentos_contrato ON lancamentos ("vinculadoContratoId")`,
+  `DROP TRIGGER IF EXISTS lancamentos_updated_at ON lancamentos`,
+  `CREATE TRIGGER lancamentos_updated_at
+     BEFORE UPDATE ON lancamentos
+     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column()`,
 
   // Tabela de notificações
   `CREATE TABLE IF NOT EXISTS notificacoes (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    tipo ENUM('todos', 'especifico') NOT NULL,
+    id SERIAL PRIMARY KEY,
+    tipo VARCHAR(10) NOT NULL CHECK (tipo IN ('todos', 'especifico')),
     titulo VARCHAR(255) NOT NULL,
     mensagem TEXT NOT NULL,
-    enviarAgora BOOLEAN DEFAULT true,
-    dataHoraAgendamento DATETIME,
-    status ENUM('agendada', 'enviada', 'lida', 'cancelada') DEFAULT 'agendada',
-    templateId INT,
-    gatilhoTipo ENUM('faturamento', 'rota_inicio', 'rota_fim', 'contrato_pendente', 'manutencao_vencimento'),
-    gatilhoParametros JSON,
-    remetenteId INT NOT NULL,
-    tenantId INT NOT NULL,
-    createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    INDEX idx_status (status),
-    INDEX idx_remetente (remetenteId),
-    INDEX idx_tenant (tenantId),
-    FOREIGN KEY (remetenteId) REFERENCES users(id) ON DELETE RESTRICT
-  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
+    "enviarAgora" BOOLEAN DEFAULT TRUE,
+    "dataHoraAgendamento" TIMESTAMP,
+    status VARCHAR(10) DEFAULT 'agendada' CHECK (status IN ('agendada', 'enviada', 'lida', 'cancelada')),
+    "templateId" INTEGER,
+    "gatilhoTipo" VARCHAR(30) CHECK ("gatilhoTipo" IN ('faturamento', 'rota_inicio', 'rota_fim', 'contrato_pendente', 'manutencao_vencimento')),
+    "gatilhoParametros" JSONB,
+    "remetenteId" INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    "tenantId" INTEGER NOT NULL,
+    "createdAt" TIMESTAMP DEFAULT NOW(),
+    "updatedAt" TIMESTAMP DEFAULT NOW()
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_notificacoes_status ON notificacoes (status)`,
+  `CREATE INDEX IF NOT EXISTS idx_notificacoes_remetente ON notificacoes ("remetenteId")`,
+  `CREATE INDEX IF NOT EXISTS idx_notificacoes_tenant ON notificacoes ("tenantId")`,
+  `DROP TRIGGER IF EXISTS notificacoes_updated_at ON notificacoes`,
+  `CREATE TRIGGER notificacoes_updated_at
+     BEFORE UPDATE ON notificacoes
+     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column()`,
 
   // Tabela de destinatários de notificação
   `CREATE TABLE IF NOT EXISTS notificacao_destinatarios (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    notificacaoId INT NOT NULL,
-    destinatarioId INT NOT NULL,
-    lida BOOLEAN DEFAULT false,
-    dataLeitura DATETIME,
-    createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    INDEX idx_notificacao (notificacaoId),
-    INDEX idx_destinatario (destinatarioId),
-    FOREIGN KEY (notificacaoId) REFERENCES notificacoes(id) ON DELETE CASCADE,
-    FOREIGN KEY (destinatarioId) REFERENCES users(id) ON DELETE CASCADE,
-    UNIQUE KEY unique_notificacao_destinatario (notificacaoId, destinatarioId)
-  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
+    id SERIAL PRIMARY KEY,
+    "notificacaoId" INTEGER NOT NULL REFERENCES notificacoes(id) ON DELETE CASCADE,
+    "destinatarioId" INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    lida BOOLEAN DEFAULT FALSE,
+    "dataLeitura" TIMESTAMP,
+    "createdAt" TIMESTAMP DEFAULT NOW(),
+    UNIQUE ("notificacaoId", "destinatarioId")
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_notif_dest_notif ON notificacao_destinatarios ("notificacaoId")`,
+  `CREATE INDEX IF NOT EXISTS idx_notif_dest_dest ON notificacao_destinatarios ("destinatarioId")`,
 
   // Tabela de rotas
   `CREATE TABLE IF NOT EXISTS rotas (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    periodo ENUM('M', 'T', 'N') NOT NULL,
+    id SERIAL PRIMARY KEY,
+    periodo VARCHAR(1) NOT NULL CHECK (periodo IN ('M', 'T', 'N')),
     data DATE NOT NULL,
-    status ENUM('nao_iniciada', 'em_andamento', 'finalizada') DEFAULT 'nao_iniciada',
-    motoristaId INT NOT NULL,
-    veiculoId INT NOT NULL,
-    horaInicio DATETIME,
-    horaFim DATETIME,
-    tenantId INT NOT NULL,
-    createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    INDEX idx_motorista (motoristaId),
-    INDEX idx_veiculo (veiculoId),
-    INDEX idx_data (data),
-    INDEX idx_tenant (tenantId),
-    FOREIGN KEY (motoristaId) REFERENCES users(id) ON DELETE RESTRICT,
-    FOREIGN KEY (veiculoId) REFERENCES veiculos(id) ON DELETE RESTRICT
-  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
+    status VARCHAR(15) DEFAULT 'nao_iniciada' CHECK (status IN ('nao_iniciada', 'em_andamento', 'finalizada')),
+    "motoristaId" INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    "veiculoId" INTEGER NOT NULL REFERENCES veiculos(id) ON DELETE RESTRICT,
+    "horaInicio" TIMESTAMP,
+    "horaFim" TIMESTAMP,
+    "tenantId" INTEGER NOT NULL,
+    "createdAt" TIMESTAMP DEFAULT NOW(),
+    "updatedAt" TIMESTAMP DEFAULT NOW()
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_rotas_motorista ON rotas ("motoristaId")`,
+  `CREATE INDEX IF NOT EXISTS idx_rotas_veiculo ON rotas ("veiculoId")`,
+  `CREATE INDEX IF NOT EXISTS idx_rotas_data ON rotas (data)`,
+  `CREATE INDEX IF NOT EXISTS idx_rotas_tenant ON rotas ("tenantId")`,
+  `DROP TRIGGER IF EXISTS rotas_updated_at ON rotas`,
+  `CREATE TRIGGER rotas_updated_at
+     BEFORE UPDATE ON rotas
+     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column()`,
 
   // Tabela de pontos de rota
   `CREATE TABLE IF NOT EXISTS ponto_rotas (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    rotaId INT NOT NULL,
-    alunoId INT,
-    tipo ENUM('casa', 'escola', 'retorno') NOT NULL,
-    enderecoId INT NOT NULL,
-    ordem INT NOT NULL,
-    tempoEstimado INT,
-    createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    INDEX idx_rota (rotaId),
-    INDEX idx_aluno (alunoId),
-    INDEX idx_endereco (enderecoId),
-    FOREIGN KEY (rotaId) REFERENCES rotas(id) ON DELETE CASCADE,
-    FOREIGN KEY (alunoId) REFERENCES alunos(id) ON DELETE SET NULL,
-    FOREIGN KEY (enderecoId) REFERENCES enderecos(id) ON DELETE RESTRICT
-  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
+    id SERIAL PRIMARY KEY,
+    "rotaId" INTEGER NOT NULL REFERENCES rotas(id) ON DELETE CASCADE,
+    "alunoId" INTEGER REFERENCES alunos(id) ON DELETE SET NULL,
+    tipo VARCHAR(8) NOT NULL CHECK (tipo IN ('casa', 'escola', 'retorno')),
+    "enderecoId" INTEGER NOT NULL REFERENCES enderecos(id) ON DELETE RESTRICT,
+    ordem INTEGER NOT NULL,
+    "tempoEstimado" INTEGER,
+    "createdAt" TIMESTAMP DEFAULT NOW()
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_ponto_rotas_rota ON ponto_rotas ("rotaId")`,
+  `CREATE INDEX IF NOT EXISTS idx_ponto_rotas_aluno ON ponto_rotas ("alunoId")`,
+  `CREATE INDEX IF NOT EXISTS idx_ponto_rotas_endereco ON ponto_rotas ("enderecoId")`,
 
   // Tabela de paradas de rota
   `CREATE TABLE IF NOT EXISTS parada_rotas (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    rotaId INT NOT NULL,
-    pontoId INT NOT NULL,
-    horaChegada DATETIME,
-    horaSaida DATETIME,
-    notificacaoEnviada BOOLEAN DEFAULT false,
-    createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    INDEX idx_rota (rotaId),
-    INDEX idx_ponto (pontoId),
-    FOREIGN KEY (rotaId) REFERENCES rotas(id) ON DELETE CASCADE,
-    FOREIGN KEY (pontoId) REFERENCES ponto_rotas(id) ON DELETE CASCADE
-  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
+    id SERIAL PRIMARY KEY,
+    "rotaId" INTEGER NOT NULL REFERENCES rotas(id) ON DELETE CASCADE,
+    "pontoId" INTEGER NOT NULL REFERENCES ponto_rotas(id) ON DELETE CASCADE,
+    "horaChegada" TIMESTAMP,
+    "horaSaida" TIMESTAMP,
+    "notificacaoEnviada" BOOLEAN DEFAULT FALSE,
+    "createdAt" TIMESTAMP DEFAULT NOW()
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_parada_rotas_rota ON parada_rotas ("rotaId")`,
+  `CREATE INDEX IF NOT EXISTS idx_parada_rotas_ponto ON parada_rotas ("pontoId")`,
 
   // Tabela de localização de veículos
   `CREATE TABLE IF NOT EXISTS localizacao_veiculos (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    veiculoId INT NOT NULL,
+    id SERIAL PRIMARY KEY,
+    "veiculoId" INTEGER NOT NULL REFERENCES veiculos(id) ON DELETE CASCADE,
     latitude DECIMAL(10, 8) NOT NULL,
     longitude DECIMAL(11, 8) NOT NULL,
-    timestamp DATETIME NOT NULL,
+    timestamp TIMESTAMP NOT NULL,
     velocidade DECIMAL(5, 2),
     direcao DECIMAL(5, 2),
-    tenantId INT NOT NULL,
-    createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    INDEX idx_veiculo (veiculoId),
-    INDEX idx_timestamp (timestamp),
-    INDEX idx_tenant (tenantId),
-    FOREIGN KEY (veiculoId) REFERENCES veiculos(id) ON DELETE CASCADE
-  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
-
-  // Alteração para adicionar statusOnline e lastHeartbeat em users (para DBs existentes)
-  `ALTER TABLE users
-    ADD COLUMN statusOnline BOOLEAN NOT NULL DEFAULT FALSE,
-    ADD COLUMN lastHeartbeat DATETIME NULL DEFAULT NULL;`,
-  `CREATE INDEX idx_users_motorista_online ON users (statusOnline, role);`
+    "tenantId" INTEGER NOT NULL,
+    "createdAt" TIMESTAMP DEFAULT NOW()
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_localizacao_veiculo ON localizacao_veiculos ("veiculoId")`,
+  `CREATE INDEX IF NOT EXISTS idx_localizacao_timestamp ON localizacao_veiculos (timestamp)`,
+  `CREATE INDEX IF NOT EXISTS idx_localizacao_tenant ON localizacao_veiculos ("tenantId")`,
 ];
 
 async function runMigrations() {
+  const client = await pool.connect();
   try {
     console.log('🔄 Iniciando migrations...');
+
+    // Criar função de trigger antes de tudo
+    await client.query(triggerFunction);
+    console.log('✅ Função de trigger update_updated_at_column criada/atualizada');
 
     for (let i = 0; i < migrations.length; i++) {
       const migration = migrations[i];
       try {
-        await pool.execute(migration);
-        console.log(`✅ Migration ${i + 1}/${migrations.length} executada com sucesso`);
+        await client.query(migration);
+        console.log(`✅ Migration ${i + 1}/${migrations.length} executada`);
       } catch (err: any) {
-        // Ignora erros de "coluna duplicada" ou "índice duplicado" causados por ALTER TABLE/CREATE INDEX
-        if (err.code === 'ER_DUP_FIELDNAME' || err.code === 'ER_DUP_KEYNAME') {
-          console.log(`⚠️ Migration ${i + 1}/${migrations.length} ignorada: já aplicada (${err.code})`);
+        // Ignorar erros de coluna/índice já existente (idempotente)
+        if (
+          err.code === '42701' || // duplicate_column
+          err.code === '42P07' || // duplicate_table (não deve acontecer com IF NOT EXISTS)
+          err.code === '42710'    // duplicate_object (trigger já existe)
+        ) {
+          console.log(`⚠️  Migration ${i + 1}/${migrations.length} ignorada: já aplicada (${err.code})`);
         } else {
+          console.error(`❌ Erro na migration ${i + 1}:`, err.message);
           throw err;
         }
       }
     }
 
-    console.log('✅ Todas as migrations foram executadas com sucesso!');
+    console.log('\n✅ Todas as migrations foram executadas com sucesso!');
     process.exit(0);
   } catch (error) {
     console.error('❌ Erro ao executar migrations:', error);
     process.exit(1);
+  } finally {
+    client.release();
   }
 }
 
 runMigrations();
-

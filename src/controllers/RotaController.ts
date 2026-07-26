@@ -255,9 +255,9 @@ export class RotaController {
         tenantId: req.tenantId,
       });
 
-      // T009: Renew heartbeat
-      await pool.execute(
-        'UPDATE users SET lastHeartbeat = NOW() WHERE id = ? AND tenantId = ?',
+      // Renew heartbeat
+      await pool.query(
+        'UPDATE users SET "lastHeartbeat" = NOW() WHERE id = $1 AND "tenantId" = $2',
         [req.userId, req.tenantId]
       );
 
@@ -277,21 +277,21 @@ export class RotaController {
 
       // Para responsável, obter motoristaId do usuário
       if (req.userRole === 'responsavel') {
-        const [rows] = await pool.execute(
-          'SELECT motoristaId FROM users WHERE id = ? AND tenantId = ?',
+        const result = await pool.query(
+          'SELECT "motoristaId" FROM users WHERE id = $1 AND "tenantId" = $2',
           [req.userId, req.tenantId]
-        ) as any[];
+        );
 
-        if (rows.length === 0 || !rows[0].motoristaId) {
+        if (result.rows.length === 0 || !result.rows[0].motoristaId) {
           res.status(404).json({ error: 'Motorista não vinculado' });
           return;
         }
 
-        const motoristaId = rows[0].motoristaId.toString();
+        const motoristaId = result.rows[0].motoristaId.toString();
 
         // Buscar veículo do motorista
         const veiculos = await VeiculoModel.findByMotorista(motoristaId, req.tenantId);
-        
+
         if (veiculos.length === 0) {
           res.status(404).json({ error: 'Nenhum veículo encontrado para este motorista' });
           return;
@@ -334,32 +334,38 @@ export class RotaController {
         return;
       }
 
-      await pool.execute(
-        `UPDATE users SET statusOnline = TRUE, lastHeartbeat = NOW() WHERE id = ? AND tenantId = ?`,
+      await pool.query(
+        `UPDATE users SET "statusOnline" = TRUE, "lastHeartbeat" = NOW() WHERE id = $1 AND "tenantId" = $2`,
         [req.userId, req.tenantId]
       );
 
-      const [notifResult] = await pool.execute(
-        `INSERT INTO notificacoes (tipo, titulo, mensagem, enviarAgora, status, remetenteId, tenantId, gatilhoTipo)
-         VALUES ('especifico', 'Motorista Online', 'A van iniciou a operação.', true, 'enviada', ?, ?, 'rota_inicio')`,
+      const notifResult = await pool.query(
+        `INSERT INTO notificacoes (tipo, titulo, mensagem, "enviarAgora", status, "remetenteId", "tenantId", "gatilhoTipo")
+         VALUES ('especifico', 'Motorista Online', 'A van iniciou a operação.', TRUE, 'enviada', $1, $2, 'rota_inicio')
+         RETURNING id`,
         [req.userId, req.tenantId]
-      ) as any;
-      const notificacaoId = notifResult.insertId;
+      );
+      const notificacaoId = notifResult.rows[0].id;
 
-      const [responsaveis] = await pool.execute(
-        `SELECT DISTINCT u.id 
-         FROM alunos a 
-         JOIN users u ON u.id = a.responsavelId 
-         WHERE a.motoristaId = ? AND a.status = 'ativo' AND a.tenantId = ? AND u.role = 'responsavel'`,
+      const responsaveisResult = await pool.query(
+        `SELECT DISTINCT u.id
+         FROM alunos a
+         JOIN users u ON u.id = a."responsavelId"
+         WHERE a."motoristaId" = $1 AND a.status = 'ativo' AND a."tenantId" = $2 AND u.role = 'responsavel'`,
         [req.userId, req.tenantId]
-      ) as any[];
+      );
+      const responsaveis = responsaveisResult.rows;
 
       if (responsaveis.length > 0) {
-        const values = responsaveis.map((r: any) => [notificacaoId, r.id]);
-        const placeholders = values.map(() => '(?, ?)').join(', ');
-        await pool.execute(
-          `INSERT INTO notificacao_destinatarios (notificacaoId, destinatarioId) VALUES ${placeholders}`,
-          values.flat()
+        // Inserção em batch com placeholders dinâmicos
+        const values: any[] = [];
+        const placeholders = responsaveis.map((r: any, i: number) => {
+          values.push(notificacaoId, r.id);
+          return `($${i * 2 + 1}, $${i * 2 + 2})`;
+        });
+        await pool.query(
+          `INSERT INTO notificacao_destinatarios ("notificacaoId", "destinatarioId") VALUES ${placeholders.join(', ')} ON CONFLICT DO NOTHING`,
+          values
         );
       }
 
@@ -367,7 +373,7 @@ export class RotaController {
         message: 'Motorista online',
         statusOnline: true,
         lastHeartbeat: new Date().toISOString(),
-        notificacoesEnviadas: responsaveis.length
+        notificacoesEnviadas: responsaveis.length,
       });
     } catch (error) {
       console.error('Erro ao ficar online:', error);
@@ -391,39 +397,44 @@ export class RotaController {
         return;
       }
 
-      await pool.execute(
-        `UPDATE users SET statusOnline = FALSE WHERE id = ? AND tenantId = ?`,
+      await pool.query(
+        `UPDATE users SET "statusOnline" = FALSE WHERE id = $1 AND "tenantId" = $2`,
         [req.userId, req.tenantId]
       );
 
-      const [notifResult] = await pool.execute(
-        `INSERT INTO notificacoes (tipo, titulo, mensagem, enviarAgora, status, remetenteId, tenantId, gatilhoTipo)
-         VALUES ('especifico', 'Motorista Offline', 'A van encerrou a operação.', true, 'enviada', ?, ?, 'rota_fim')`,
+      const notifResult = await pool.query(
+        `INSERT INTO notificacoes (tipo, titulo, mensagem, "enviarAgora", status, "remetenteId", "tenantId", "gatilhoTipo")
+         VALUES ('especifico', 'Motorista Offline', 'A van encerrou a operação.', TRUE, 'enviada', $1, $2, 'rota_fim')
+         RETURNING id`,
         [req.userId, req.tenantId]
-      ) as any;
-      const notificacaoId = notifResult.insertId;
+      );
+      const notificacaoId = notifResult.rows[0].id;
 
-      const [responsaveis] = await pool.execute(
-        `SELECT DISTINCT u.id 
-         FROM alunos a 
-         JOIN users u ON u.id = a.responsavelId 
-         WHERE a.motoristaId = ? AND a.status = 'ativo' AND a.tenantId = ? AND u.role = 'responsavel'`,
+      const responsaveisResult = await pool.query(
+        `SELECT DISTINCT u.id
+         FROM alunos a
+         JOIN users u ON u.id = a."responsavelId"
+         WHERE a."motoristaId" = $1 AND a.status = 'ativo' AND a."tenantId" = $2 AND u.role = 'responsavel'`,
         [req.userId, req.tenantId]
-      ) as any[];
+      );
+      const responsaveis = responsaveisResult.rows;
 
       if (responsaveis.length > 0) {
-        const values = responsaveis.map((r: any) => [notificacaoId, r.id]);
-        const placeholders = values.map(() => '(?, ?)').join(', ');
-        await pool.execute(
-          `INSERT INTO notificacao_destinatarios (notificacaoId, destinatarioId) VALUES ${placeholders}`,
-          values.flat()
+        const values: any[] = [];
+        const placeholders = responsaveis.map((r: any, i: number) => {
+          values.push(notificacaoId, r.id);
+          return `($${i * 2 + 1}, $${i * 2 + 2})`;
+        });
+        await pool.query(
+          `INSERT INTO notificacao_destinatarios ("notificacaoId", "destinatarioId") VALUES ${placeholders.join(', ')} ON CONFLICT DO NOTHING`,
+          values
         );
       }
 
       res.status(200).json({
         message: 'Motorista offline',
         statusOnline: false,
-        notificacoesEnviadas: responsaveis.length
+        notificacoesEnviadas: responsaveis.length,
       });
     } catch (error) {
       console.error('Erro ao ficar offline:', error);
@@ -443,20 +454,20 @@ export class RotaController {
         return;
       }
 
-      const [rows] = await pool.execute(
-        `SELECT DISTINCT u.id as motoristaId, u.nome as motoristaNome, u.statusOnline, u.lastHeartbeat
+      const result = await pool.query(
+        `SELECT DISTINCT u.id as "motoristaId", u.nome as "motoristaNome", u."statusOnline", u."lastHeartbeat"
          FROM alunos a
-         JOIN users u ON u.id = a.motoristaId
-         WHERE a.responsavelId = ? AND a.status = 'ativo' AND a.tenantId = ? LIMIT 1`,
+         JOIN users u ON u.id = a."motoristaId"
+         WHERE a."responsavelId" = $1 AND a.status = 'ativo' AND a."tenantId" = $2 LIMIT 1`,
         [req.userId, req.tenantId]
-      ) as any[];
+      );
 
-      if (rows.length === 0) {
+      if (result.rows.length === 0) {
         res.status(404).json({ error: 'Nenhum motorista vinculado encontrado' });
         return;
       }
 
-      const m = rows[0];
+      const m = result.rows[0];
       let online = Boolean(m.statusOnline);
       let expirado = false;
 
@@ -467,7 +478,7 @@ export class RotaController {
         if (diffMs > 5 * 60 * 1000) {
           online = false;
           expirado = true;
-          await pool.execute('UPDATE users SET statusOnline = FALSE WHERE id = ?', [m.motoristaId]);
+          await pool.query('UPDATE users SET "statusOnline" = FALSE WHERE id = $1', [m.motoristaId]);
         }
       }
 
@@ -484,7 +495,7 @@ export class RotaController {
         lastHeartbeat: m.lastHeartbeat,
         heartbeatExpirado: expirado,
         veiculoId: Number(veiculos[0].id),
-        veiculoPlaca: veiculos[0].placa
+        veiculoPlaca: veiculos[0].placa,
       });
     } catch (error) {
       console.error('Erro ao buscar status do motorista:', error);
@@ -492,4 +503,3 @@ export class RotaController {
     }
   }
 }
-

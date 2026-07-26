@@ -3,11 +3,12 @@ import { Rota, PontoRota, ParadaRota, LocalizacaoVeiculo } from '../types';
 
 export class RotaModel {
   static async create(rota: Omit<Rota, 'id' | 'createdAt' | 'updatedAt'>): Promise<string> {
-    const [result] = await pool.execute(
+    const result = await pool.query(
       `INSERT INTO rotas (
-        periodo, data, status, motoristaId, veiculoId,
-        horaInicio, horaFim, tenantId
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        periodo, data, status, "motoristaId", "veiculoId",
+        "horaInicio", "horaFim", "tenantId"
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      RETURNING id`,
       [
         rota.periodo,
         rota.data,
@@ -18,20 +19,20 @@ export class RotaModel {
         rota.horaFim || null,
         rota.tenantId,
       ]
-    ) as any;
+    );
 
-    return result.insertId.toString();
+    return result.rows[0].id.toString();
   }
 
   static async findById(id: string, tenantId: string): Promise<Rota | null> {
-    const [rows] = await pool.execute(
-      'SELECT * FROM rotas WHERE id = ? AND tenantId = ?',
+    const result = await pool.query(
+      'SELECT * FROM rotas WHERE id = $1 AND "tenantId" = $2',
       [id, tenantId]
-    ) as any[];
+    );
 
-    if (rows.length === 0) return null;
+    if (result.rows.length === 0) return null;
 
-    return this.mapRowToRota(rows[0]);
+    return this.mapRowToRota(result.rows[0]);
   }
 
   static async findAll(tenantId: string, filters?: {
@@ -40,57 +41,65 @@ export class RotaModel {
     status?: string;
     data?: string;
   }): Promise<Rota[]> {
-    let query = 'SELECT * FROM rotas WHERE tenantId = ?';
+    let query = 'SELECT * FROM rotas WHERE "tenantId" = $1';
     const params: any[] = [tenantId];
+    let paramIndex = 2;
 
     if (filters?.motoristaId) {
-      query += ' AND motoristaId = ?';
+      query += ` AND "motoristaId" = $${paramIndex++}`;
       params.push(filters.motoristaId);
     }
     if (filters?.periodo) {
-      query += ' AND periodo = ?';
+      query += ` AND periodo = $${paramIndex++}`;
       params.push(filters.periodo);
     }
     if (filters?.status) {
-      query += ' AND status = ?';
+      query += ` AND status = $${paramIndex++}`;
       params.push(filters.status);
     }
     if (filters?.data) {
-      query += ' AND data = ?';
+      query += ` AND data = $${paramIndex++}`;
       params.push(filters.data);
     }
 
-    query += ' ORDER BY data DESC, horaInicio DESC';
+    query += ' ORDER BY data DESC, "horaInicio" DESC';
 
-    const [rows] = await pool.execute(query, params) as any[];
+    const result = await pool.query(query, params);
 
-    return rows.map((row: any) => this.mapRowToRota(row));
+    return result.rows.map((row: any) => this.mapRowToRota(row));
   }
 
   static async update(id: string, tenantId: string, updates: Partial<Rota>): Promise<void> {
     const fields: string[] = [];
     const values: any[] = [];
+    let paramIndex = 1;
+
+    const camelCols = new Set(['motoristaId','veiculoId','horaInicio','horaFim','tenantId','createdAt','updatedAt']);
+    const skipFields = new Set(['id', 'createdAt', 'updatedAt', 'tenantId']);
 
     Object.keys(updates).forEach((key) => {
-      if (key !== 'id' && key !== 'createdAt' && key !== 'updatedAt' && key !== 'tenantId') {
-        fields.push(`${key} = ?`);
+      if (!skipFields.has(key)) {
+        const col = camelCols.has(key) ? `"${key}"` : key;
+        fields.push(`${col} = $${paramIndex++}`);
         values.push((updates as any)[key]);
       }
     });
 
-    fields.push('updatedAt = NOW()');
+    if (fields.length === 0) return;
+
     values.push(id, tenantId);
 
-    await pool.execute(
-      `UPDATE rotas SET ${fields.join(', ')} WHERE id = ? AND tenantId = ?`,
+    await pool.query(
+      `UPDATE rotas SET ${fields.join(', ')} WHERE id = $${paramIndex++} AND "tenantId" = $${paramIndex}`,
       values
     );
   }
 
   static async addPonto(ponto: Omit<PontoRota, 'id' | 'createdAt'>): Promise<string> {
-    const [result] = await pool.execute(
-      `INSERT INTO ponto_rotas (rotaId, alunoId, tipo, enderecoId, ordem, tempoEstimado)
-       VALUES (?, ?, ?, ?, ?, ?)`,
+    const result = await pool.query(
+      `INSERT INTO ponto_rotas ("rotaId", "alunoId", tipo, "enderecoId", ordem, "tempoEstimado")
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING id`,
       [
         ponto.rotaId,
         ponto.alunoId || null,
@@ -99,18 +108,18 @@ export class RotaModel {
         ponto.ordem,
         ponto.tempoEstimado || null,
       ]
-    ) as any;
+    );
 
-    return result.insertId.toString();
+    return result.rows[0].id.toString();
   }
 
   static async getPontos(rotaId: string): Promise<PontoRota[]> {
-    const [rows] = await pool.execute(
-      'SELECT * FROM ponto_rotas WHERE rotaId = ? ORDER BY ordem',
+    const result = await pool.query(
+      'SELECT * FROM ponto_rotas WHERE "rotaId" = $1 ORDER BY ordem',
       [rotaId]
-    ) as any[];
+    );
 
-    return rows.map((row: any) => ({
+    return result.rows.map((row: any) => ({
       id: row.id.toString(),
       rotaId: row.rotaId.toString(),
       alunoId: row.alunoId ? row.alunoId.toString() : undefined,
@@ -123,9 +132,10 @@ export class RotaModel {
   }
 
   static async addParada(parada: Omit<ParadaRota, 'id' | 'createdAt'>): Promise<string> {
-    const [result] = await pool.execute(
-      `INSERT INTO parada_rotas (rotaId, pontoId, horaChegada, horaSaida, notificacaoEnviada)
-       VALUES (?, ?, ?, ?, ?)`,
+    const result = await pool.query(
+      `INSERT INTO parada_rotas ("rotaId", "pontoId", "horaChegada", "horaSaida", "notificacaoEnviada")
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING id`,
       [
         parada.rotaId,
         parada.pontoId,
@@ -133,18 +143,18 @@ export class RotaModel {
         parada.horaSaida || null,
         parada.notificacaoEnviada,
       ]
-    ) as any;
+    );
 
-    return result.insertId.toString();
+    return result.rows[0].id.toString();
   }
 
   static async getParadas(rotaId: string): Promise<ParadaRota[]> {
-    const [rows] = await pool.execute(
-      'SELECT * FROM parada_rotas WHERE rotaId = ?',
+    const result = await pool.query(
+      'SELECT * FROM parada_rotas WHERE "rotaId" = $1',
       [rotaId]
-    ) as any[];
+    );
 
-    return rows.map((row: any) => ({
+    return result.rows.map((row: any) => ({
       id: row.id.toString(),
       rotaId: row.rotaId.toString(),
       pontoId: row.pontoId.toString(),
@@ -156,10 +166,11 @@ export class RotaModel {
   }
 
   static async saveLocalizacao(localizacao: Omit<LocalizacaoVeiculo, 'id' | 'createdAt'>): Promise<string> {
-    const [result] = await pool.execute(
+    const result = await pool.query(
       `INSERT INTO localizacao_veiculos (
-        veiculoId, latitude, longitude, timestamp, velocidade, direcao, tenantId
-      ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        "veiculoId", latitude, longitude, timestamp, velocidade, direcao, "tenantId"
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+      RETURNING id`,
       [
         localizacao.veiculoId,
         localizacao.latitude,
@@ -169,34 +180,34 @@ export class RotaModel {
         localizacao.direcao || null,
         localizacao.tenantId,
       ]
-    ) as any;
+    );
 
-    return result.insertId.toString();
+    return result.rows[0].id.toString();
   }
 
   static async getLocalizacao(veiculoId: string, tenantId: string): Promise<LocalizacaoVeiculo | null> {
-    const [rows] = await pool.execute(
+    const result = await pool.query(
       `SELECT * FROM localizacao_veiculos
-       WHERE veiculoId = ? AND tenantId = ?
+       WHERE "veiculoId" = $1 AND "tenantId" = $2
        ORDER BY timestamp DESC
        LIMIT 1`,
       [veiculoId, tenantId]
-    ) as any[];
+    );
 
-    if (rows.length === 0) return null;
+    if (result.rows.length === 0) return null;
 
-    const row = rows[0];
+    const row = result.rows[0];
 
     return {
-      id: rows[0].id.toString(),
-      veiculoId: rows[0].veiculoId.toString(),
-      latitude: parseFloat(rows[0].latitude),
-      longitude: parseFloat(rows[0].longitude),
-      timestamp: rows[0].timestamp,
-      velocidade: rows[0].velocidade ? parseFloat(rows[0].velocidade) : undefined,
-      direcao: rows[0].direcao ? parseFloat(rows[0].direcao) : undefined,
-      tenantId: rows[0].tenantId.toString(),
-      createdAt: rows[0].createdAt,
+      id: row.id.toString(),
+      veiculoId: row.veiculoId.toString(),
+      latitude: parseFloat(row.latitude),
+      longitude: parseFloat(row.longitude),
+      timestamp: row.timestamp,
+      velocidade: row.velocidade ? parseFloat(row.velocidade) : undefined,
+      direcao: row.direcao ? parseFloat(row.direcao) : undefined,
+      tenantId: row.tenantId.toString(),
+      createdAt: row.createdAt,
     };
   }
 
@@ -216,4 +227,3 @@ export class RotaModel {
     };
   }
 }
-

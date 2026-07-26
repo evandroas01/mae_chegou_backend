@@ -1,15 +1,16 @@
 import pool from '../config/database';
-import { Contrato, ContratoAluno, ContratoLog } from '../types';
+import { Contrato, ContratoLog } from '../types';
 
 export class ContratoModel {
   static async create(contrato: Omit<Contrato, 'id' | 'createdAt' | 'updatedAt'>): Promise<string> {
-    const [result] = await pool.execute(
+    const result = await pool.query(
       `INSERT INTO contratos (
-        numero, responsavelId, periodo, valor, vencimento,
-        statusAssinatura, statusPagamento, periodoAtraso,
-        clausulas, arquivoUrl, dataInicio, dataFim,
-        dataEnvio, dataAssinatura, tenantId
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        numero, "responsavelId", periodo, valor, vencimento,
+        "statusAssinatura", "statusPagamento", "periodoAtraso",
+        clausulas, "arquivoUrl", "dataInicio", "dataFim",
+        "dataEnvio", "dataAssinatura", "tenantId"
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+      RETURNING id`,
       [
         contrato.numero,
         contrato.responsavelId,
@@ -27,20 +28,20 @@ export class ContratoModel {
         contrato.dataAssinatura || null,
         contrato.tenantId,
       ]
-    ) as any;
+    );
 
-    return result.insertId.toString();
+    return result.rows[0].id.toString();
   }
 
   static async findById(id: string, tenantId: string): Promise<Contrato | null> {
-    const [rows] = await pool.execute(
-      'SELECT * FROM contratos WHERE id = ? AND tenantId = ?',
+    const result = await pool.query(
+      'SELECT * FROM contratos WHERE id = $1 AND "tenantId" = $2',
       [id, tenantId]
-    ) as any[];
+    );
 
-    if (rows.length === 0) return null;
+    if (result.rows.length === 0) return null;
 
-    return this.mapRowToContrato(rows[0]);
+    return this.mapRowToContrato(result.rows[0]);
   }
 
   static async findAll(tenantId: string, filters?: {
@@ -48,86 +49,97 @@ export class ContratoModel {
     statusAssinatura?: string;
     statusPagamento?: string;
   }): Promise<Contrato[]> {
-    let query = 'SELECT * FROM contratos WHERE tenantId = ?';
+    let query = 'SELECT * FROM contratos WHERE "tenantId" = $1';
     const params: any[] = [tenantId];
+    let paramIndex = 2;
 
     if (filters?.responsavelId) {
-      query += ' AND responsavelId = ?';
+      query += ` AND "responsavelId" = $${paramIndex++}`;
       params.push(filters.responsavelId);
     }
     if (filters?.statusAssinatura) {
-      query += ' AND statusAssinatura = ?';
+      query += ` AND "statusAssinatura" = $${paramIndex++}`;
       params.push(filters.statusAssinatura);
     }
     if (filters?.statusPagamento) {
-      query += ' AND statusPagamento = ?';
+      query += ` AND "statusPagamento" = $${paramIndex++}`;
       params.push(filters.statusPagamento);
     }
 
-    query += ' ORDER BY createdAt DESC';
+    query += ' ORDER BY "createdAt" DESC';
 
-    const [rows] = await pool.execute(query, params) as any[];
+    const result = await pool.query(query, params);
 
-    return rows.map((row: any) => this.mapRowToContrato(row));
+    return result.rows.map((row: any) => this.mapRowToContrato(row));
   }
 
   static async update(id: string, tenantId: string, updates: Partial<Contrato>): Promise<void> {
     const fields: string[] = [];
     const values: any[] = [];
+    let paramIndex = 1;
+
+    const camelCols = new Set([
+      'responsavelId','statusAssinatura','statusPagamento','periodoAtraso',
+      'arquivoUrl','dataInicio','dataFim','dataEnvio','dataAssinatura','tenantId',
+      'createdAt','updatedAt',
+    ]);
+    const skipFields = new Set(['id', 'createdAt', 'updatedAt', 'tenantId']);
 
     Object.keys(updates).forEach((key) => {
-      if (key !== 'id' && key !== 'createdAt' && key !== 'updatedAt' && key !== 'tenantId') {
-        fields.push(`${key} = ?`);
+      if (!skipFields.has(key)) {
+        const col = camelCols.has(key) ? `"${key}"` : key;
+        fields.push(`${col} = $${paramIndex++}`);
         values.push((updates as any)[key]);
       }
     });
 
-    fields.push('updatedAt = NOW()');
+    if (fields.length === 0) return;
+
     values.push(id, tenantId);
 
-    await pool.execute(
-      `UPDATE contratos SET ${fields.join(', ')} WHERE id = ? AND tenantId = ?`,
+    await pool.query(
+      `UPDATE contratos SET ${fields.join(', ')} WHERE id = $${paramIndex++} AND "tenantId" = $${paramIndex}`,
       values
     );
   }
 
   static async delete(id: string, tenantId: string): Promise<void> {
-    await pool.execute(
-      'DELETE FROM contratos WHERE id = ? AND tenantId = ?',
+    await pool.query(
+      'DELETE FROM contratos WHERE id = $1 AND "tenantId" = $2',
       [id, tenantId]
     );
   }
 
   static async addAluno(contratoId: string, alunoId: string): Promise<void> {
-    await pool.execute(
-      'INSERT INTO contrato_alunos (contratoId, alunoId) VALUES (?, ?)',
+    await pool.query(
+      'INSERT INTO contrato_alunos ("contratoId", "alunoId") VALUES ($1, $2) ON CONFLICT DO NOTHING',
       [contratoId, alunoId]
     );
   }
 
   static async getAlunos(contratoId: string): Promise<string[]> {
-    const [rows] = await pool.execute(
-      'SELECT alunoId FROM contrato_alunos WHERE contratoId = ?',
+    const result = await pool.query(
+      'SELECT "alunoId" FROM contrato_alunos WHERE "contratoId" = $1',
       [contratoId]
-    ) as any[];
+    );
 
-    return rows.map((row: any) => row.alunoId.toString());
+    return result.rows.map((row: any) => row.alunoId.toString());
   }
 
   static async addLog(log: Omit<ContratoLog, 'id' | 'createdAt'>): Promise<void> {
-    await pool.execute(
-      'INSERT INTO contrato_logs (contratoId, acao, data, observacoes) VALUES (?, ?, ?, ?)',
+    await pool.query(
+      'INSERT INTO contrato_logs ("contratoId", acao, data, observacoes) VALUES ($1, $2, $3, $4)',
       [log.contratoId, log.acao, log.data, log.observacoes || null]
     );
   }
 
   static async getLogs(contratoId: string): Promise<ContratoLog[]> {
-    const [rows] = await pool.execute(
-      'SELECT * FROM contrato_logs WHERE contratoId = ? ORDER BY data DESC',
+    const result = await pool.query(
+      'SELECT * FROM contrato_logs WHERE "contratoId" = $1 ORDER BY data DESC',
       [contratoId]
-    ) as any[];
+    );
 
-    return rows.map((row: any) => ({
+    return result.rows.map((row: any) => ({
       id: row.id.toString(),
       contratoId: row.contratoId.toString(),
       acao: row.acao,
@@ -160,4 +172,3 @@ export class ContratoModel {
     };
   }
 }
-

@@ -24,23 +24,23 @@ export class ManutencaoController {
       } = req.body;
 
       // Buscar veículo do motorista
-      const [veiculos] = await pool.execute(
-        'SELECT id FROM veiculos WHERE id = ? AND motoristaId = ? AND tenantId = ?',
+      const veiculos = await pool.query(
+        'SELECT id FROM veiculos WHERE id = $1 AND "motoristaId" = $2 AND "tenantId" = $3',
         [veiculoId, req.userId, req.tenantId]
-      ) as any[];
+      );
 
-      if (veiculos.length === 0) {
+      if (veiculos.rows.length === 0) {
         res.status(404).json({ error: 'Veículo não encontrado' });
         return;
       }
 
       const status = dataAgendada ? 'agendada' : 'realizada';
 
-      const [result] = await pool.execute(
+      const result = await pool.query(
         `INSERT INTO manutencoes (
-          veiculoId, dataAgendada, dataRealizada, tipo, descricao,
-          custo, quilometragem, status, repetirTipo, repetirIntervalo, tenantId
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          "veiculoId", "dataAgendada", "dataRealizada", tipo, descricao,
+          custo, quilometragem, status, "repetirTipo", "repetirIntervalo", "tenantId"
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
         [
           veiculoId,
           dataAgendada ? new Date(dataAgendada) : null,
@@ -54,9 +54,9 @@ export class ManutencaoController {
           repetirIntervalo || null,
           req.tenantId,
         ]
-      ) as any;
+      );
 
-      const manutencao = await this.findById(result.insertId.toString(), req.tenantId);
+      const manutencao = await this.findById(result.rows[0].id.toString(), req.tenantId);
 
       res.status(201).json(manutencao);
     } catch (error) {
@@ -77,31 +77,32 @@ export class ManutencaoController {
       let query = `
         SELECT m.*, v.placa, v.modelo
         FROM manutencoes m
-        INNER JOIN veiculos v ON m.veiculoId = v.id
-        WHERE m.tenantId = ?
+        INNER JOIN veiculos v ON m."veiculoId" = v.id
+        WHERE m."tenantId" = $1
       `;
       const params: any[] = [req.tenantId];
+      let paramIndex = 2;
 
       if (req.userRole === 'motorista') {
-        query += ' AND v.motoristaId = ?';
+        query += ` AND v."motoristaId" = $${paramIndex++}`;
         params.push(req.userId);
       }
 
       if (veiculoId) {
-        query += ' AND m.veiculoId = ?';
+        query += ` AND m."veiculoId" = $${paramIndex++}`;
         params.push(veiculoId);
       }
 
       if (status) {
-        query += ' AND m.status = ?';
+        query += ` AND m.status = $${paramIndex++}`;
         params.push(status);
       }
 
-      query += ' ORDER BY m.createdAt DESC';
+      query += ' ORDER BY m."createdAt" DESC';
 
-      const [rows] = await pool.execute(query, params) as any[];
+      const result = await pool.query(query, params);
 
-      res.json(rows.map((row: any) => this.mapRowToManutencao(row)));
+      res.json(result.rows.map((row: any) => this.mapRowToManutencao(row)));
     } catch (error) {
       console.error('Erro ao buscar manutenções:', error);
       res.status(500).json({ error: 'Erro interno do servidor' });
@@ -109,14 +110,14 @@ export class ManutencaoController {
   }
 
   static async findById(id: string, tenantId: string): Promise<Manutencao | null> {
-    const [rows] = await pool.execute(
-      'SELECT * FROM manutencoes WHERE id = ? AND tenantId = ?',
+    const result = await pool.query(
+      'SELECT * FROM manutencoes WHERE id = $1 AND "tenantId" = $2',
       [id, tenantId]
-    ) as any[];
+    );
 
-    if (rows.length === 0) return null;
+    if (result.rows.length === 0) return null;
 
-    return this.mapRowToManutencao(rows[0]);
+    return this.mapRowToManutencao(result.rows[0]);
   }
 
   static async update(req: AuthRequest, res: Response): Promise<void> {
@@ -131,49 +132,54 @@ export class ManutencaoController {
 
       const fields: string[] = [];
       const values: any[] = [];
+      let paramIndex = 1;
 
       if (updates.dataAgendada !== undefined) {
-        fields.push('dataAgendada = ?');
+        fields.push(`"dataAgendada" = $${paramIndex++}`);
         values.push(updates.dataAgendada ? new Date(updates.dataAgendada) : null);
       }
       if (updates.dataRealizada !== undefined) {
-        fields.push('dataRealizada = ?');
+        fields.push(`"dataRealizada" = $${paramIndex++}`);
         values.push(updates.dataRealizada ? new Date(updates.dataRealizada) : null);
       }
       if (updates.tipo) {
-        fields.push('tipo = ?');
+        fields.push(`tipo = $${paramIndex++}`);
         values.push(updates.tipo);
       }
       if (updates.descricao) {
-        fields.push('descricao = ?');
+        fields.push(`descricao = $${paramIndex++}`);
         values.push(updates.descricao);
       }
       if (updates.custo !== undefined) {
-        fields.push('custo = ?');
+        fields.push(`custo = $${paramIndex++}`);
         values.push(updates.custo);
       }
       if (updates.quilometragem !== undefined) {
-        fields.push('quilometragem = ?');
+        fields.push(`quilometragem = $${paramIndex++}`);
         values.push(updates.quilometragem);
       }
       if (updates.status) {
-        fields.push('status = ?');
+        fields.push(`status = $${paramIndex++}`);
         values.push(updates.status);
       }
       if (updates.repetirTipo !== undefined) {
-        fields.push('repetirTipo = ?');
+        fields.push(`"repetirTipo" = $${paramIndex++}`);
         values.push(updates.repetirTipo);
       }
       if (updates.repetirIntervalo !== undefined) {
-        fields.push('repetirIntervalo = ?');
+        fields.push(`"repetirIntervalo" = $${paramIndex++}`);
         values.push(updates.repetirIntervalo);
       }
 
-      fields.push('updatedAt = NOW()');
+      if (fields.length === 0) {
+        res.status(400).json({ error: 'Nenhum campo para atualizar' });
+        return;
+      }
+
       values.push(id, req.tenantId);
 
-      await pool.execute(
-        `UPDATE manutencoes SET ${fields.join(', ')} WHERE id = ? AND tenantId = ?`,
+      await pool.query(
+        `UPDATE manutencoes SET ${fields.join(', ')} WHERE id = $${paramIndex++} AND "tenantId" = $${paramIndex}`,
         values
       );
 
@@ -225,4 +231,3 @@ export class ManutencaoController {
     }
   }
 }
-

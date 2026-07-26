@@ -2,7 +2,18 @@ import { Response } from 'express';
 import { AuthRequest } from '../middleware/auth';
 import { LancamentoModel } from '../models/LancamentoModel';
 import pool from '../config/database';
-import { ResumoFinanceiro } from '../types';
+
+interface ResumoFinanceiro {
+  saldoAtual: number;
+  totalReceitasMes: number;
+  totalDespesasMes: number;
+  saldoMes: number;
+  inadimplencia: {
+    valor: number;
+    percentual: number;
+    quantidade: number;
+  };
+}
 
 export class FinanceiroController {
   static async create(req: AuthRequest, res: Response): Promise<void> {
@@ -146,49 +157,49 @@ export class FinanceiroController {
       const ultimoDiaMes = new Date(hoje.getFullYear(), hoje.getMonth() + 1, 0);
 
       // Total receitas do mês
-      const [receitas] = await pool.execute(
+      const receitas = await pool.query(
         `SELECT COALESCE(SUM(valor), 0) as total
          FROM lancamentos
-         WHERE tenantId = ? AND tipo = 'receita' AND data >= ? AND data <= ?`,
+         WHERE "tenantId" = $1 AND tipo = 'receita' AND data >= $2 AND data <= $3`,
         [req.tenantId, primeiroDiaMes, ultimoDiaMes]
-      ) as any[];
+      );
 
       // Total despesas do mês
-      const [despesas] = await pool.execute(
+      const despesas = await pool.query(
         `SELECT COALESCE(SUM(valor), 0) as total
          FROM lancamentos
-         WHERE tenantId = ? AND tipo = 'despesa' AND data >= ? AND data <= ?`,
+         WHERE "tenantId" = $1 AND tipo = 'despesa' AND data >= $2 AND data <= $3`,
         [req.tenantId, primeiroDiaMes, ultimoDiaMes]
-      ) as any[];
+      );
 
-      // Saldo atual (todas as receitas - todas as despesas)
-      const [saldo] = await pool.execute(
-        `SELECT 
+      // Saldo atual (todas as receitas pagas - todas as despesas pagas)
+      const saldo = await pool.query(
+        `SELECT
           COALESCE(SUM(CASE WHEN tipo = 'receita' THEN valor ELSE -valor END), 0) as saldo
          FROM lancamentos
-         WHERE tenantId = ? AND status = 'pago'`,
+         WHERE "tenantId" = $1 AND status = 'pago'`,
         [req.tenantId]
-      ) as any[];
+      );
 
       // Inadimplência
-      const [inadimplencia] = await pool.execute(
-        `SELECT 
+      const inadimplencia = await pool.query(
+        `SELECT
           COALESCE(SUM(valor), 0) as valor,
           COUNT(*) as quantidade
          FROM lancamentos
-         WHERE tenantId = ? AND tipo = 'receita' AND status = 'atrasado'`,
+         WHERE "tenantId" = $1 AND tipo = 'receita' AND status = 'atrasado'`,
         [req.tenantId]
-      ) as any[];
+      );
 
-      const totalReceitas = receitas[0]?.total || 0;
-      const totalDespesas = despesas[0]?.total || 0;
-      const saldoAtual = saldo[0]?.saldo || 0;
-      const valorInadimplencia = inadimplencia[0]?.valor || 0;
-      const quantidadeInadimplencia = inadimplencia[0]?.quantidade || 0;
+      const totalReceitas = receitas.rows[0]?.total || 0;
+      const totalDespesas = despesas.rows[0]?.total || 0;
+      const saldoAtual = saldo.rows[0]?.saldo || 0;
+      const valorInadimplencia = inadimplencia.rows[0]?.valor || 0;
+      const quantidadeInadimplencia = inadimplencia.rows[0]?.quantidade || 0;
 
       const totalReceitasMes = totalReceitas;
-      const percentualInadimplencia = totalReceitasMes > 0 
-        ? (valorInadimplencia / totalReceitasMes) * 100 
+      const percentualInadimplencia = totalReceitasMes > 0
+        ? (valorInadimplencia / totalReceitasMes) * 100
         : 0;
 
       const resumo: ResumoFinanceiro = {
@@ -210,4 +221,3 @@ export class FinanceiroController {
     }
   }
 }
-

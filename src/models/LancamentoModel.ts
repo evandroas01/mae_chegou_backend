@@ -3,12 +3,13 @@ import { Lancamento } from '../types';
 
 export class LancamentoModel {
   static async create(lancamento: Omit<Lancamento, 'id' | 'createdAt' | 'updatedAt'>): Promise<string> {
-    const [result] = await pool.execute(
+    const result = await pool.query(
       `INSERT INTO lancamentos (
-        tipo, categoria, valor, data, dataVencimento, dataPagamento,
-        descricao, status, vinculadoAlunoId, vinculadoContratoId,
-        recorrenciaTipo, recorrenciaMeses, recorrenciaDataFim, tenantId
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        tipo, categoria, valor, data, "dataVencimento", "dataPagamento",
+        descricao, status, "vinculadoAlunoId", "vinculadoContratoId",
+        "recorrenciaTipo", "recorrenciaMeses", "recorrenciaDataFim", "tenantId"
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+      RETURNING id`,
       [
         lancamento.tipo,
         lancamento.categoria,
@@ -25,20 +26,20 @@ export class LancamentoModel {
         lancamento.recorrenciaDataFim || null,
         lancamento.tenantId,
       ]
-    ) as any;
+    );
 
-    return result.insertId.toString();
+    return result.rows[0].id.toString();
   }
 
   static async findById(id: string, tenantId: string): Promise<Lancamento | null> {
-    const [rows] = await pool.execute(
-      'SELECT * FROM lancamentos WHERE id = ? AND tenantId = ?',
+    const result = await pool.query(
+      'SELECT * FROM lancamentos WHERE id = $1 AND "tenantId" = $2',
       [id, tenantId]
-    ) as any[];
+    );
 
-    if (rows.length === 0) return null;
+    if (result.rows.length === 0) return null;
 
-    return this.mapRowToLancamento(rows[0]);
+    return this.mapRowToLancamento(result.rows[0]);
   }
 
   static async findAll(tenantId: string, filters?: {
@@ -47,56 +48,67 @@ export class LancamentoModel {
     dataInicio?: string;
     dataFim?: string;
   }): Promise<Lancamento[]> {
-    let query = 'SELECT * FROM lancamentos WHERE tenantId = ?';
+    let query = 'SELECT * FROM lancamentos WHERE "tenantId" = $1';
     const params: any[] = [tenantId];
+    let paramIndex = 2;
 
     if (filters?.tipo) {
-      query += ' AND tipo = ?';
+      query += ` AND tipo = $${paramIndex++}`;
       params.push(filters.tipo);
     }
     if (filters?.status) {
-      query += ' AND status = ?';
+      query += ` AND status = $${paramIndex++}`;
       params.push(filters.status);
     }
     if (filters?.dataInicio) {
-      query += ' AND data >= ?';
+      query += ` AND data >= $${paramIndex++}`;
       params.push(filters.dataInicio);
     }
     if (filters?.dataFim) {
-      query += ' AND data <= ?';
+      query += ` AND data <= $${paramIndex++}`;
       params.push(filters.dataFim);
     }
 
     query += ' ORDER BY data DESC';
 
-    const [rows] = await pool.execute(query, params) as any[];
+    const result = await pool.query(query, params);
 
-    return rows.map((row: any) => this.mapRowToLancamento(row));
+    return result.rows.map((row: any) => this.mapRowToLancamento(row));
   }
 
   static async update(id: string, tenantId: string, updates: Partial<Lancamento>): Promise<void> {
     const fields: string[] = [];
     const values: any[] = [];
+    let paramIndex = 1;
+
+    const camelCols = new Set([
+      'dataVencimento','dataPagamento','vinculadoAlunoId','vinculadoContratoId',
+      'recorrenciaTipo','recorrenciaMeses','recorrenciaDataFim','tenantId',
+      'createdAt','updatedAt',
+    ]);
+    const skipFields = new Set(['id', 'createdAt', 'updatedAt', 'tenantId']);
 
     Object.keys(updates).forEach((key) => {
-      if (key !== 'id' && key !== 'createdAt' && key !== 'updatedAt' && key !== 'tenantId') {
-        fields.push(`${key} = ?`);
+      if (!skipFields.has(key)) {
+        const col = camelCols.has(key) ? `"${key}"` : key;
+        fields.push(`${col} = $${paramIndex++}`);
         values.push((updates as any)[key]);
       }
     });
 
-    fields.push('updatedAt = NOW()');
+    if (fields.length === 0) return;
+
     values.push(id, tenantId);
 
-    await pool.execute(
-      `UPDATE lancamentos SET ${fields.join(', ')} WHERE id = ? AND tenantId = ?`,
+    await pool.query(
+      `UPDATE lancamentos SET ${fields.join(', ')} WHERE id = $${paramIndex++} AND "tenantId" = $${paramIndex}`,
       values
     );
   }
 
   static async delete(id: string, tenantId: string): Promise<void> {
-    await pool.execute(
-      'DELETE FROM lancamentos WHERE id = ? AND tenantId = ?',
+    await pool.query(
+      'DELETE FROM lancamentos WHERE id = $1 AND "tenantId" = $2',
       [id, tenantId]
     );
   }
@@ -123,4 +135,3 @@ export class LancamentoModel {
     };
   }
 }
-

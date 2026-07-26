@@ -31,26 +31,26 @@ export class AlunoController {
 
       // Criar escola se não existir
       let escolaId: string;
-      const [escolas] = await pool.execute(
-        'SELECT id FROM escolas WHERE nome = ? AND tenantId = ?',
+      const escolaResult = await pool.query(
+        'SELECT id FROM escolas WHERE nome = $1 AND "tenantId" = $2',
         [escola.nome, req.tenantId]
-      ) as any[];
+      );
 
-      if (escolas.length > 0) {
-        escolaId = escolas[0].id.toString();
+      if (escolaResult.rows.length > 0) {
+        escolaId = escolaResult.rows[0].id.toString();
       } else {
-        const [result] = await pool.execute(
-          `INSERT INTO escolas (nome, endereco, cidade, estado, cep, tenantId)
-           VALUES (?, ?, ?, ?, ?, ?)`,
+        const newEscola = await pool.query(
+          `INSERT INTO escolas (nome, endereco, cidade, estado, cep, "tenantId")
+           VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
           [escola.nome, escola.endereco, 'São Paulo', 'SP', '00000-000', req.tenantId]
-        ) as any;
-        escolaId = result.insertId.toString();
+        );
+        escolaId = newEscola.rows[0].id.toString();
       }
 
       // Criar endereço contratante
-      const [endContratante] = await pool.execute(
-        `INSERT INTO enderecos (rua, numero, complemento, bairro, cidade, estado, cep, tenantId)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      const endContratante = await pool.query(
+        `INSERT INTO enderecos (rua, numero, complemento, bairro, cidade, estado, cep, "tenantId")
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
         [
           enderecoContratante.rua,
           enderecoContratante.numero,
@@ -61,15 +61,15 @@ export class AlunoController {
           enderecoContratante.cep,
           req.tenantId,
         ]
-      ) as any;
-      const enderecoContratanteId = endContratante.insertId.toString();
+      );
+      const enderecoContratanteId = endContratante.rows[0].id.toString();
 
       // Criar endereço saída se fornecido
       let enderecoSaidaId: string | undefined;
       if (enderecoSaida) {
-        const [endSaida] = await pool.execute(
-          `INSERT INTO enderecos (rua, numero, complemento, bairro, cidade, estado, cep, tenantId)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        const endSaida = await pool.query(
+          `INSERT INTO enderecos (rua, numero, complemento, bairro, cidade, estado, cep, "tenantId")
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
           [
             enderecoSaida.rua,
             enderecoSaida.numero,
@@ -80,51 +80,49 @@ export class AlunoController {
             enderecoSaida.cep,
             req.tenantId,
           ]
-        ) as any;
-        enderecoSaidaId = endSaida.insertId.toString();
+        );
+        enderecoSaidaId = endSaida.rows[0].id.toString();
       }
 
       // Se responsável tem ID, usar diretamente (responsável existente)
       let responsavelId: string;
       if ((responsavel as any).id) {
-        // Verificar se o responsável existe e está vinculado ao motorista
-        const [responsavelExistente] = await pool.execute(
-          'SELECT id FROM users WHERE id = ? AND motoristaId = ? AND tenantId = ? AND role = "responsavel"',
+        const responsavelExistente = await pool.query(
+          'SELECT id FROM users WHERE id = $1 AND "motoristaId" = $2 AND "tenantId" = $3 AND role = \'responsavel\'',
           [(responsavel as any).id, req.userId, req.tenantId]
-        ) as any[];
-        
-        if (responsavelExistente.length === 0) {
+        );
+
+        if (responsavelExistente.rows.length === 0) {
           res.status(400).json({ error: 'Responsável não encontrado ou não vinculado a este motorista' });
           return;
         }
-        
+
         responsavelId = (responsavel as any).id;
       } else {
         // Buscar ou criar responsável
-        const [responsaveis] = await pool.execute(
-          'SELECT id FROM users WHERE cpf = ? AND tenantId = ?',
+        const responsaveis = await pool.query(
+          'SELECT id FROM users WHERE cpf = $1 AND "tenantId" = $2',
           [responsavel.cpf, req.tenantId]
-        ) as any[];
+        );
 
-        if (responsaveis.length > 0) {
-          responsavelId = responsaveis[0].id.toString();
+        if (responsaveis.rows.length > 0) {
+          responsavelId = responsaveis.rows[0].id.toString();
         } else {
-        // Criar responsável como usuário
-        const [result] = await pool.execute(
-          `INSERT INTO users (nome, email, password, role, telefone, cpf, motoristaId, tenantId)
-           VALUES (?, ?, ?, 'responsavel', ?, ?, ?, ?)`,
-          [
-            responsavel.nome,
-            responsavel.email || `${responsavel.cpf}@temp.com`,
-            'temp_password', // Senha temporária
-            responsavel.telefone,
-            responsavel.cpf,
-            motoristaId || req.userId!, // Vincular ao motorista
-            req.tenantId,
-          ]
-        ) as any;
-            responsavelId = result.insertId.toString();
-          }
+          const newResp = await pool.query(
+            `INSERT INTO users (nome, email, password, role, telefone, cpf, "motoristaId", "tenantId")
+             VALUES ($1, $2, $3, 'responsavel', $4, $5, $6, $7) RETURNING id`,
+            [
+              responsavel.nome,
+              responsavel.email || `${responsavel.cpf}@temp.com`,
+              'temp_password',
+              responsavel.telefone,
+              responsavel.cpf,
+              motoristaId || req.userId!,
+              req.tenantId,
+            ]
+          );
+          responsavelId = newResp.rows[0].id.toString();
+        }
       }
 
       // Criar aluno
@@ -239,4 +237,3 @@ export class AlunoController {
     }
   }
 }
-

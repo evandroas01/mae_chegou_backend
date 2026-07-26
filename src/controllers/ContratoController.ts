@@ -22,11 +22,11 @@ export class ContratoController {
       } = req.body;
 
       // Gerar número do contrato
-      const [count] = await pool.execute(
-        'SELECT COUNT(*) as total FROM contratos WHERE tenantId = ?',
+      const countResult = await pool.query(
+        'SELECT COUNT(*) as total FROM contratos WHERE "tenantId" = $1',
         [req.tenantId]
-      ) as any[];
-      const numero = `CT-${new Date().getFullYear()}-${String(count[0].total + 1).padStart(3, '0')}`;
+      );
+      const numero = `CT-${new Date().getFullYear()}-${String(Number(countResult.rows[0].total) + 1).padStart(3, '0')}`;
 
       const contratoId = await ContratoModel.create({
         numero,
