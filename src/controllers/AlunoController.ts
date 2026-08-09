@@ -1,6 +1,7 @@
 import { Response } from 'express';
 import { AuthRequest } from '../middleware/auth';
 import { AlunoModel } from '../models/AlunoModel';
+import { LancamentoModel } from '../models/LancamentoModel';
 import pool from '../config/database';
 
 export class AlunoController {
@@ -146,6 +147,28 @@ export class AlunoController {
       });
 
       const aluno = await AlunoModel.findById(alunoId, req.tenantId);
+
+      // Gerar o primeiro lançamento financeiro pendente (Mensalidade)
+      if (valorMensal && parseFloat(valorMensal) > 0) {
+        const primeiroVencimento = datasVencimento && datasVencimento.length > 0 ? datasVencimento[0] : 5;
+        const dataVencimento = new Date();
+        dataVencimento.setDate(primeiroVencimento);
+        if (dataVencimento < new Date()) {
+          dataVencimento.setMonth(dataVencimento.getMonth() + 1); // Passa pro próximo mês se o dia já passou
+        }
+
+        await LancamentoModel.create({
+          tipo: 'receita',
+          categoria: 'receita_recorrente',
+          valor: parseFloat(valorMensal),
+          data: new Date(),
+          dataVencimento: dataVencimento,
+          descricao: `Mensalidade Inicial - ${nome}`,
+          status: 'pendente',
+          vinculadoAlunoId: alunoId,
+          tenantId: req.tenantId,
+        });
+      }
 
       res.status(201).json(aluno);
     } catch (error) {

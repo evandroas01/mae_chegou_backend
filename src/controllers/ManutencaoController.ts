@@ -77,7 +77,7 @@ export class ManutencaoController {
       let query = `
         SELECT m.*, v.placa, v.modelo
         FROM manutencoes m
-        INNER JOIN veiculos v ON m."veiculoId" = v.id
+        LEFT JOIN veiculos v ON m."veiculoId" = v.id
         WHERE m."tenantId" = $1
       `;
       const params: any[] = [req.tenantId];
@@ -194,8 +194,8 @@ export class ManutencaoController {
 
   private static mapRowToManutencao(row: any): Manutencao {
     return {
-      id: row.id.toString(),
-      veiculoId: row.veiculoId.toString(),
+      id: row.id?.toString(),
+      veiculoId: row.veiculoId?.toString(),
       dataAgendada: row.dataAgendada ? new Date(row.dataAgendada) : undefined,
       dataRealizada: row.dataRealizada ? new Date(row.dataRealizada) : undefined,
       tipo: row.tipo,

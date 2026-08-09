@@ -104,6 +104,17 @@ export class UserModel {
       fields.push(`"lastHeartbeat" = $${paramIndex++}`);
       values.push(updates.lastHeartbeat);
     }
+    const extraCols = ['cnhNumero', 'cnhValidade', 'banco', 'agencia', 'conta', 'pix', 'vagasManha', 'vagasTarde', 'vagasNoite'];
+    extraCols.forEach(col => {
+      if ((updates as any)[col] !== undefined) {
+        fields.push(`"${col}" = $${paramIndex++}`);
+        values.push((updates as any)[col] || null);
+      }
+    });
+    if ((updates as any).configuracoes) {
+      fields.push(`configuracoes = $${paramIndex++}`);
+      values.push((updates as any).configuracoes);
+    }
 
     if (fields.length === 0) return;
 
@@ -138,6 +149,16 @@ export class UserModel {
       tenantId: row.tenantId ? row.tenantId.toString() : undefined,
       statusOnline: Boolean(row.statusOnline),
       lastHeartbeat: row.lastHeartbeat,
+      cnhNumero: row.cnhNumero,
+      cnhValidade: row.cnhValidade ? new Date(row.cnhValidade).toISOString().split('T')[0] : undefined,
+      banco: row.banco,
+      agencia: row.agencia,
+      conta: row.conta,
+      pix: row.pix,
+      vagasManha: row.vagasManha,
+      vagasTarde: row.vagasTarde,
+      vagasNoite: row.vagasNoite,
+      configuracoes: row.configuracoes,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
     };

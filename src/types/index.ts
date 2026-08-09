@@ -13,9 +13,21 @@ export interface User {
   tenantId?: string; // Para multi-tenancy (ID da empresa/organização)
   statusOnline?: boolean;
   lastHeartbeat?: Date | null;
+  // Campos exclusivos de motorista
+  cnhNumero?: string;
+  cnhValidade?: string;
+  banco?: string;
+  agencia?: string;
+  conta?: string;
+  pix?: string;
+  vagasManha?: number;
+  vagasTarde?: number;
+  vagasNoite?: number;
+  configuracoes?: Record<string, unknown>;
   createdAt: Date;
   updatedAt: Date;
 }
+
 
 // Aluno Types
 export type Periodo = 'M' | 'T' | 'N';

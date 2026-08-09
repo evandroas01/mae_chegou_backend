@@ -120,7 +120,11 @@ export class AuthController {
         return;
       }
 
-      const { nome, email, telefone, cpf, password } = req.body;
+      const { 
+        nome, email, telefone, cpf, password,
+        cnhNumero, cnhValidade, banco, agencia, conta, pix,
+        vagasManha, vagasTarde, vagasNoite, configuracoes
+      } = req.body;
 
       const updates: any = {};
       if (nome) updates.nome = nome;
@@ -128,6 +132,16 @@ export class AuthController {
       if (telefone !== undefined) updates.telefone = telefone;
       if (cpf !== undefined) updates.cpf = cpf;
       if (password) updates.password = password;
+      if (cnhNumero !== undefined) updates.cnhNumero = cnhNumero;
+      if (cnhValidade !== undefined) updates.cnhValidade = cnhValidade;
+      if (banco !== undefined) updates.banco = banco;
+      if (agencia !== undefined) updates.agencia = agencia;
+      if (conta !== undefined) updates.conta = conta;
+      if (pix !== undefined) updates.pix = pix;
+      if (vagasManha !== undefined) updates.vagasManha = vagasManha;
+      if (vagasTarde !== undefined) updates.vagasTarde = vagasTarde;
+      if (vagasNoite !== undefined) updates.vagasNoite = vagasNoite;
+      if (configuracoes !== undefined) updates.configuracoes = configuracoes;
 
       if (Object.keys(updates).length === 0) {
         res.status(400).json({ error: 'Nenhum campo para atualizar' });

@@ -18,45 +18,32 @@ export class ContratoController {
         valor,
         vencimento,
         dataInicio,
-        clausulas,
       } = req.body;
 
-      // Gerar número do contrato
-      const countResult = await pool.query(
-        'SELECT COUNT(*) as total FROM contratos WHERE "tenantId" = $1',
-        [req.tenantId]
-      );
-      const numero = `CT-${new Date().getFullYear()}-${String(Number(countResult.rows[0].total) + 1).padStart(3, '0')}`;
+      // Gerar número do contrato único
+      const numeroContrato = `CT-${new Date().getFullYear()}-${Math.floor(Math.random() * 10000).toString().padStart(4, '0')}`;
 
       const contratoId = await ContratoModel.create({
-        numero,
+        numero: numeroContrato,
         responsavelId,
         periodo,
-        valor: parseFloat(valor),
-        vencimento: parseInt(vencimento),
-        statusAssinatura: 'pendente',
-        statusPagamento: 'em_dia',
+        valor,
+        vencimento,
         dataInicio: new Date(dataInicio),
-        clausulas: clausulas || null,
         tenantId: req.tenantId,
-      });
+      }, alunoIds);
 
-      // Adicionar alunos ao contrato
-      if (alunoIds && Array.isArray(alunoIds)) {
+      // Atualizar alunos com o contratoId
+      if (alunoIds && alunoIds.length > 0) {
         for (const alunoId of alunoIds) {
-          await ContratoModel.addAluno(contratoId, alunoId);
+          await pool.query(
+            `UPDATE alunos SET "contratoId" = $1 WHERE id = $2 AND "tenantId" = $3`,
+            [contratoId, alunoId, req.tenantId]
+          );
         }
       }
 
-      // Criar log
-      await ContratoModel.addLog({
-        contratoId,
-        acao: 'criado',
-        data: new Date(),
-      });
-
       const contrato = await ContratoModel.findById(contratoId, req.tenantId);
-
       res.status(201).json(contrato);
     } catch (error) {
       console.error('Erro ao criar contrato:', error);
@@ -71,33 +58,13 @@ export class ContratoController {
         return;
       }
 
-      const filters: any = {};
+      let responsavelId = undefined;
       if (req.userRole === 'responsavel') {
-        filters.responsavelId = req.userId;
-      }
-      if (req.query.statusAssinatura) {
-        filters.statusAssinatura = req.query.statusAssinatura;
-      }
-      if (req.query.statusPagamento) {
-        filters.statusPagamento = req.query.statusPagamento;
+        responsavelId = req.userId;
       }
 
-      const contratos = await ContratoModel.findAll(req.tenantId, filters);
-
-      // Adicionar alunos e logs a cada contrato
-      const contratosCompletos = await Promise.all(
-        contratos.map(async (contrato) => {
-          const alunoIds = await ContratoModel.getAlunos(contrato.id);
-          const logs = await ContratoModel.getLogs(contrato.id);
-          return {
-            ...contrato,
-            alunoIds,
-            logs,
-          };
-        })
-      );
-
-      res.json(contratosCompletos);
+      const contratos = await ContratoModel.findAll(req.tenantId, responsavelId);
+      res.json(contratos);
     } catch (error) {
       console.error('Erro ao buscar contratos:', error);
       res.status(500).json({ error: 'Erro interno do servidor' });
@@ -119,14 +86,13 @@ export class ContratoController {
         return;
       }
 
-      const alunoIds = await ContratoModel.getAlunos(contrato.id);
-      const logs = await ContratoModel.getLogs(contrato.id);
+      // Validar acesso se for responsável
+      if (req.userRole === 'responsavel' && contrato.responsavelId !== req.userId) {
+        res.status(403).json({ error: 'Acesso negado' });
+        return;
+      }
 
-      res.json({
-        ...contrato,
-        alunoIds,
-        logs,
-      });
+      res.json(contrato);
     } catch (error) {
       console.error('Erro ao buscar contrato:', error);
       res.status(500).json({ error: 'Erro interno do servidor' });
@@ -143,90 +109,24 @@ export class ContratoController {
       const { id } = req.params;
       const updates = req.body;
 
-      await ContratoModel.update(id, req.tenantId, updates);
-      const contrato = await ContratoModel.findById(id, req.tenantId);
+      // Responsáveis só podem assinar
+      if (req.userRole === 'responsavel') {
+        const contrato = await ContratoModel.findById(id, req.tenantId);
+        if (contrato?.responsavelId !== req.userId) {
+          res.status(403).json({ error: 'Acesso negado' });
+          return;
+        }
+        
+        await ContratoModel.update(id, req.tenantId, { statusAssinatura: 'assinado' });
+      } else {
+        await ContratoModel.update(id, req.tenantId, updates);
+      }
 
-      res.json(contrato);
+      const contratoAtualizado = await ContratoModel.findById(id, req.tenantId);
+      res.json(contratoAtualizado);
     } catch (error) {
       console.error('Erro ao atualizar contrato:', error);
       res.status(500).json({ error: 'Erro interno do servidor' });
     }
   }
-
-  static async delete(req: AuthRequest, res: Response): Promise<void> {
-    try {
-      if (!req.tenantId) {
-        res.status(400).json({ error: 'Tenant ID não encontrado' });
-        return;
-      }
-
-      const { id } = req.params;
-      await ContratoModel.delete(id, req.tenantId);
-
-      res.status(204).send();
-    } catch (error) {
-      console.error('Erro ao deletar contrato:', error);
-      res.status(500).json({ error: 'Erro interno do servidor' });
-    }
-  }
-
-  static async assinar(req: AuthRequest, res: Response): Promise<void> {
-    try {
-      if (!req.tenantId) {
-        res.status(400).json({ error: 'Tenant ID não encontrado' });
-        return;
-      }
-
-      const { id } = req.params;
-
-      await ContratoModel.update(id, req.tenantId, {
-        statusAssinatura: 'assinado',
-        dataAssinatura: new Date(),
-      });
-
-      await ContratoModel.addLog({
-        contratoId: id,
-        acao: 'assinado',
-        data: new Date(),
-      });
-
-      const contrato = await ContratoModel.findById(id, req.tenantId);
-
-      res.json(contrato);
-    } catch (error) {
-      console.error('Erro ao assinar contrato:', error);
-      res.status(500).json({ error: 'Erro interno do servidor' });
-    }
-  }
-
-  static async cancelar(req: AuthRequest, res: Response): Promise<void> {
-    try {
-      if (!req.tenantId) {
-        res.status(400).json({ error: 'Tenant ID não encontrado' });
-        return;
-      }
-
-      const { id } = req.params;
-      const { motivo } = req.body;
-
-      await ContratoModel.update(id, req.tenantId, {
-        statusAssinatura: 'cancelado',
-      });
-
-      await ContratoModel.addLog({
-        contratoId: id,
-        acao: 'cancelado',
-        data: new Date(),
-        observacoes: motivo,
-      });
-
-      const contrato = await ContratoModel.findById(id, req.tenantId);
-
-      res.json(contrato);
-    } catch (error) {
-      console.error('Erro ao cancelar contrato:', error);
-      res.status(500).json({ error: 'Erro interno do servidor' });
-    }
-  }
 }
-
