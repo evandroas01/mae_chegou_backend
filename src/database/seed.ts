@@ -74,19 +74,29 @@ async function seed() {
     const escolaResult = await client.query(
       `INSERT INTO escolas (nome, endereco, cidade, estado, cep, "tenantId")
        VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT DO NOTHING
        RETURNING id`,
       ['Escola Municipal São Paulo', 'Rua A, 123', 'São Paulo', 'SP', '01000-000', 1]
     );
-    const escolaId: number = escolaResult.rows[0]?.id || 1;
+    let escolaId: number = escolaResult.rows[0]?.id;
+    if (!escolaId) {
+      const existing = await client.query(`SELECT id FROM escolas WHERE nome = $1 AND "tenantId" = $2`, ['Escola Municipal São Paulo', 1]);
+      escolaId = existing.rows[0]?.id || 1;
+    }
 
     // Criar endereço de exemplo
     const enderecoResult = await client.query(
       `INSERT INTO enderecos (rua, numero, bairro, cidade, estado, cep, "tenantId")
        VALUES ($1, $2, $3, $4, $5, $6, $7)
+       ON CONFLICT DO NOTHING
        RETURNING id`,
       ['Rua B', '456', 'Centro', 'São Paulo', 'SP', '01000-000', 1]
     );
-    const enderecoId: number = enderecoResult.rows[0]?.id || 1;
+    let enderecoId: number = enderecoResult.rows[0]?.id;
+    if (!enderecoId) {
+      const existing = await client.query(`SELECT id FROM enderecos WHERE rua = $1 AND numero = $2 AND "tenantId" = $3`, ['Rua B', '456', 1]);
+      enderecoId = existing.rows[0]?.id || 1;
+    }
 
     // Criar aluno de exemplo
     await client.query(
