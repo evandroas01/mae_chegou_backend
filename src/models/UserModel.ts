@@ -126,6 +126,62 @@ export class UserModel {
     );
   }
 
+  /**
+   * Exclui a conta e os dados pessoais vinculados (exigência da App Store).
+   * Executa tudo em transação, na ordem exigida pelas FKs ON DELETE RESTRICT.
+   */
+  static async deleteAccount(id: string): Promise<void> {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      const alunosRes = await client.query(
+        'SELECT id, "enderecoContratanteId", "enderecoSaidaId" FROM alunos WHERE "responsavelId" = $1 OR "motoristaId" = $1',
+        [id]
+      );
+      const alunoIds: number[] = alunosRes.rows.map((r: any) => r.id);
+      const enderecoIds: number[] = alunosRes.rows
+        .flatMap((r: any) => [r.enderecoContratanteId, r.enderecoSaidaId])
+        .filter((v: any) => v != null);
+
+      // Pontos de rota (paradas caem em cascata)
+      await client.query(
+        `DELETE FROM ponto_rotas
+         WHERE "rotaId" IN (SELECT id FROM rotas WHERE "motoristaId" = $1)
+            OR "alunoId" = ANY($2::int[])`,
+        [id, alunoIds]
+      );
+      await client.query('DELETE FROM rotas WHERE "motoristaId" = $1', [id]);
+      // Veículos (documentos, manutenções e localizações caem em cascata)
+      await client.query('DELETE FROM veiculos WHERE "motoristaId" = $1', [id]);
+      // Notificações enviadas (destinatários caem em cascata)
+      await client.query('DELETE FROM notificacoes WHERE "remetenteId" = $1', [id]);
+      // Alunos e contratos
+      await client.query('DELETE FROM alunos WHERE id = ANY($1::int[])', [alunoIds]);
+      await client.query('DELETE FROM contratos WHERE "responsavelId" = $1', [id]);
+
+      // Endereços que ficaram sem uso
+      if (enderecoIds.length > 0) {
+        await client.query(
+          `DELETE FROM enderecos e
+           WHERE e.id = ANY($1::int[])
+             AND NOT EXISTS (SELECT 1 FROM alunos a WHERE a."enderecoContratanteId" = e.id OR a."enderecoSaidaId" = e.id)
+             AND NOT EXISTS (SELECT 1 FROM ponto_rotas p WHERE p."enderecoId" = e.id)`,
+          [enderecoIds]
+        );
+      }
+
+      await client.query('DELETE FROM users WHERE id = $1', [id]);
+
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   static async verifyPassword(email: string, password: string): Promise<User | null> {
     const user = await this.findByEmail(email);
     if (!user) return null;

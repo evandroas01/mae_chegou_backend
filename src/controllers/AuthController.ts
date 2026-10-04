@@ -174,6 +174,28 @@ export class AuthController {
     }
   }
 
+  static async deleteAccount(req: AuthRequest, res: Response): Promise<void> {
+    try {
+      if (!req.userId) {
+        res.status(401).json({ error: 'Usuário não autenticado' });
+        return;
+      }
+
+      const user = await UserModel.findById(req.userId);
+      if (!user) {
+        res.status(404).json({ error: 'Usuário não encontrado' });
+        return;
+      }
+
+      await UserModel.deleteAccount(req.userId);
+
+      res.json({ message: 'Conta excluída com sucesso' });
+    } catch (error) {
+      console.error('Erro ao excluir conta:', error);
+      res.status(500).json({ error: 'Erro ao excluir conta' });
+    }
+  }
+
   static async getResponsaveisByMotorista(req: AuthRequest, res: Response): Promise<void> {
     try {
       if (!req.userId) {

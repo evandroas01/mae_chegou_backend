@@ -10,6 +10,7 @@ router.post('/login', validate(loginValidator), AuthController.login);
 router.post('/register', validate(registerValidator), AuthController.register);
 router.get('/me', authenticate, AuthController.me);
 router.put('/me', authenticate, AuthController.update);
+router.delete('/me', authenticate, AuthController.deleteAccount);
 router.get('/responsaveis', authenticate, AuthController.getResponsaveisByMotorista);
 
 export default router;
